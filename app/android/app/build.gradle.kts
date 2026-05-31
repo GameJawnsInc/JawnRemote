@@ -52,6 +52,20 @@ android {
                 signingConfigs.getByName("release")
             else
                 signingConfigs.getByName("debug")
+
+            // Keep R8 OFF for release.
+            // Flutter 3.44 + AGP 8 run R8 in "full mode" by default, which strips
+            // Room's generated WorkDatabase_Impl. The AdMob SDK pulls in
+            // androidx.work (WorkManager), which auto-initializes that Room DB at
+            // launch via androidx.startup — so a minified build crashes instantly
+            // with "Failed to create an instance of androidx.work.impl.WorkDatabase".
+            // On a Flutter app R8 only shrinks the small Java/Kotlin layer (the bulk
+            // is libflutter.so + libapp.so, which R8 never touches), so disabling it
+            // costs ~nothing and removes a whole class of release-only crashes.
+            // If you ever re-enable minify, add keep rules for Room/WorkManager
+            // (and the GMA + Play Billing SDKs) or set android.enableR8.fullMode=false.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
