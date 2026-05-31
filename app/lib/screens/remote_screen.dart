@@ -4,6 +4,7 @@ import '../models/host.dart';
 import '../services/remote_client.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
+import '../widgets/air_mouse_pad.dart';
 import 'settings_screen.dart';
 
 class RemoteScreen extends StatefulWidget {
@@ -15,6 +16,7 @@ class RemoteScreen extends StatefulWidget {
 
 class _RemoteScreenState extends State<RemoteScreen> {
   bool _keyboard = false;
+  bool _air = false;
   bool _saved = false;
   bool _started = false;
   RemoteClient? _client;
@@ -102,6 +104,11 @@ class _RemoteScreenState extends State<RemoteScreen> {
             ]),
             actions: [
               IconButton(
+                tooltip: _air ? 'Touchpad' : 'Air mouse',
+                icon: Icon(_air ? Icons.touch_app : Icons.threed_rotation),
+                onPressed: () => setState(() => _air = !_air),
+              ),
+              IconButton(
                 tooltip: 'Keyboard',
                 icon: Icon(_keyboard ? Icons.keyboard_hide : Icons.keyboard),
                 onPressed: () => setState(() => _keyboard = !_keyboard),
@@ -124,7 +131,11 @@ class _RemoteScreenState extends State<RemoteScreen> {
     switch (client.state) {
       case ConnState.connected:
         return Column(children: [
-          Expanded(child: Trackpad(client: client, settings: scope.settings)),
+          Expanded(
+            child: _air
+                ? AirMousePad(client: client, settings: scope.settings)
+                : Trackpad(client: client, settings: scope.settings),
+          ),
           _MouseButtons(client: client),
           if (_keyboard) KeyboardBar(client: client),
         ]);
