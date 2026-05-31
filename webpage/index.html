@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JawnRemote — your phone is the mouse & keyboard</title>
+  <meta name="description" content="Turn your phone into a wireless mouse and keyboard for your Windows PC over Wi-Fi. Free with a one-time $1.99 option to remove ads.">
+
+  <!-- NOINDEX: the whole jawnston.com domain is gated (X-Robots-Tag in the
+       Caddyfile) during the family's private phase. To make JawnRemote public
+       for SEO when you launch: remove this meta tag AND drop the global
+       X-Robots-Tag header for this path in the Caddyfile. -->
+  <meta name="robots" content="noindex, nofollow">
+
+  <!-- Open Graph / share preview -->
+  <meta property="og:title" content="JawnRemote — your phone is the mouse & keyboard">
+  <meta property="og:description" content="Turn your phone into a wireless mouse and keyboard for your Windows PC over Wi-Fi.">
+  <meta property="og:type" content="website">
+
+  <style>
+    :root {
+      /* Same warm-dark base as the jawnston.com family so it reads as a
+         sibling; accent is JawnRemote's in-app blue (#4F8CFF) so the page is
+         branded with exactly what the user opens on their phone. */
+      --bg: #0f0d0b;
+      --ink: #e8e4dc;
+      --accent: #4F8CFF;
+      --accent-soft: rgba(79, 140, 255, 0.35);
+      --accent-glow: rgba(79, 140, 255, 0.10);
+      --muted: #6b6358;
+      --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      --wrap: 960px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--mono);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1.25rem;
+      position: relative;
+      isolation: isolate;
+      line-height: 1.5;
+    }
+    /* Subtle noise texture matches the JawnPlay / JawnRPG page treatment. */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.04;
+      z-index: -1;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    header, footer, main {
+      width: 100%;
+      max-width: var(--wrap);
+      margin: 0 auto;
+    }
+    header, footer {
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+    }
+    header { font-size: 1.05rem; }
+    header a { color: var(--muted); text-decoration: none; transition: color 0.2s ease; }
+    header a:hover { color: var(--accent); }
+    footer { font-size: 0.75rem; margin-top: auto; padding-top: 1.5rem; }
+    footer .dot { color: var(--accent); }
+    main { flex: 1; padding: 1.25rem 0 2rem; }
+
+    /* --- Hero ----------------------------------------------------- */
+    .hero {
+      position: relative;
+      padding: 4rem 3rem;
+      outline: 1px solid var(--accent-soft);
+      box-shadow: 0 0 48px var(--accent-glow), 0 0 1px rgba(232, 228, 220, 0.04);
+      background: #000;
+      text-align: center;
+    }
+    .cursor-mark { width: 64px; height: 64px; margin: 0 auto 1.5rem; display: block; }
+    .hero h1 {
+      font-size: 3rem; font-weight: 400; letter-spacing: 0.2em;
+      text-transform: uppercase; color: var(--ink); margin-bottom: 0.5rem;
+    }
+    .hero .tagline {
+      font-size: 1.1rem; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 2rem;
+    }
+    .hero .pitch { max-width: 620px; margin: 0 auto 2.25rem; font-size: 1rem; }
+    .cta-row {
+      display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;
+    }
+    .cta {
+      display: inline-flex; align-items: center; gap: 0.6rem;
+      padding: 1rem 2rem; font-family: var(--mono); font-size: 1.05rem;
+      letter-spacing: 0.12em; text-transform: uppercase; text-decoration: none;
+      border: 1px solid var(--accent); transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+    }
+    .cta-primary { color: var(--bg); background: var(--accent); }
+    .cta-primary:hover { opacity: 0.85; }
+    .cta-secondary { color: var(--accent); background: transparent; }
+    .cta-secondary:hover { background: rgba(79, 140, 255, 0.1); }
+    .download-note {
+      margin-top: 1.25rem; font-size: 0.8rem; letter-spacing: 0.08em; color: var(--muted);
+    }
+
+    /* --- Sections ------------------------------------------------- */
+    section.block { margin-top: 3rem; }
+    section.block h2 {
+      font-size: 1rem; font-weight: 400; letter-spacing: 0.18em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 1.25rem;
+      padding-bottom: 0.5rem; border-bottom: 1px solid var(--accent-soft);
+    }
+
+    /* --- Features ------------------------------------------------- */
+    .features {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem 2rem;
+    }
+    .feature {
+      padding: 1rem 1.25rem; border-left: 2px solid var(--accent);
+      background: rgba(79, 140, 255, 0.03);
+    }
+    .feature .name { font-size: 0.95rem; color: var(--accent); letter-spacing: 0.05em; margin-bottom: 0.35rem; }
+    .feature .desc { font-size: 0.9rem; }
+
+    /* --- Quick start (collapsible) ------------------------------- */
+    .quickstart summary {
+      cursor: pointer; padding: 1rem 1.5rem; font-size: 1rem; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--muted); border: 1px solid var(--accent-soft);
+      list-style: none; display: flex; justify-content: space-between; align-items: center;
+      transition: color 0.2s ease, border-color 0.2s ease;
+    }
+    .quickstart summary::-webkit-details-marker { display: none; }
+    .quickstart summary::after { content: '+'; font-size: 1.25rem; color: var(--accent); }
+    .quickstart[open] summary::after { content: '−'; }
+    .quickstart summary:hover, .quickstart[open] summary { color: var(--accent); border-color: var(--accent); }
+    .quickstart .body {
+      margin-top: 1rem; padding: 1.5rem 2rem; border: 1px solid var(--muted);
+      background: rgba(0, 0, 0, 0.3); font-size: 0.92rem; line-height: 1.7;
+    }
+    .quickstart .body h3 {
+      font-size: 0.9rem; font-weight: 400; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--accent); margin-top: 1.5rem; margin-bottom: 0.5rem;
+    }
+    .quickstart .body h3:first-child { margin-top: 0; }
+    .quickstart .body ol, .quickstart .body ul { padding-left: 1.5rem; margin-bottom: 0.5rem; }
+    .quickstart .body li { margin-bottom: 0.4rem; }
+    .quickstart .body code {
+      font-family: var(--mono); background: rgba(79, 140, 255, 0.1);
+      padding: 0.1em 0.4em; font-size: 0.92em;
+    }
+    .callout {
+      margin: 0.75rem 0; padding: 0.6rem 0.9rem; border-left: 2px solid var(--accent);
+      background: rgba(79, 140, 255, 0.05);
+    }
+
+    /* --- Gestures table ------------------------------------------ */
+    .gestures table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+    .gestures td { padding: 0.55rem 1rem; border-bottom: 1px solid rgba(107, 99, 88, 0.3); }
+    .gestures td.key { width: 240px; color: var(--accent); letter-spacing: 0.05em; }
+    .gestures tr:last-child td { border-bottom: 0; }
+
+    .price-note {
+      margin-top: 2rem; padding: 0.9rem 1.25rem; border: 1px dashed var(--muted);
+      text-align: center; font-size: 0.85rem; color: var(--muted); letter-spacing: 0.05em;
+    }
+    .price-note b { color: var(--ink); }
+
+    /* --- Responsive ---------------------------------------------- */
+    @media (max-width: 640px) {
+      body { padding: 1rem; }
+      .hero { padding: 2.5rem 1.25rem; }
+      .hero h1 { font-size: 2.1rem; letter-spacing: 0.15em; }
+      .cta { width: 100%; justify-content: center; }
+      .quickstart .body { padding: 1.25rem 1rem; }
+      .gestures td.key { width: 130px; }
+      header { font-size: 0.8rem; }
+    }
+  </style>
+  <!-- Umami analytics (jawnston family). Create a site in your umami dashboard
+       for jawnremote and paste its id into data-website-id below. -->
+  <script defer src="/h/script.js" data-website-id="REPLACE_WITH_JAWNREMOTE_UMAMI_ID" data-host-url="https://jawnston.com/h"></script>
+</head>
+<body>
+  <header>
+    <span><a href="/">Jawnston</a></span>
+    <span>JawnRemote</span>
+    <span>est. 2026</span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <!-- Same wireless-cursor mark as the app icon, inline so there's no extra request. -->
+      <svg class="cursor-mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <g fill="none" stroke="#4F8CFF" stroke-width="4" stroke-linecap="round" opacity="0.85">
+          <path d="M30 14 A18 18 0 0 1 44 28"/>
+          <path d="M28 6 A26 26 0 0 1 52 30"/>
+        </g>
+        <path d="M14 12 L14 44 L22 36 L28 49 L34 46 L28 34 L40 34 Z" fill="#4F8CFF"/>
+      </svg>
+      <h1>JawnRemote</h1>
+      <p class="tagline">Your phone is the mouse &amp; keyboard.</p>
+      <p class="pitch">
+        Control your Windows PC from your phone over Wi-Fi — a smooth trackpad,
+        a full keyboard, scroll and clicks. No cables, no account. The
+        replacement for UnifiedRemote that actually works on Windows 11.
+      </p>
+      <div class="cta-row">
+        <a class="cta cta-primary"
+           href="https://play.google.com/store/apps/details?id=com.jawnstoninc.jawnremote"
+           target="_blank" rel="noopener">&#9654;&nbsp; Get it on Google Play</a>
+        <a class="cta cta-secondary"
+           href="/downloads/jawnremote/JawnRemote-Server-Setup.exe" download>&darr;&nbsp; PC server for Windows</a>
+      </div>
+      <p class="download-note">
+        You need both: the <b>app</b> on your phone + the free <b>server</b> on your PC.
+        Server: ~14&nbsp;MB &middot; no Python needed &middot; opens the firewall for you.
+      </p>
+    </section>
+
+    <section class="block">
+      <h2>What it does</h2>
+      <div class="features">
+        <div class="feature">
+          <div class="name">Trackpad</div>
+          <div class="desc">Drag to move, tap to click, two fingers to right-click or scroll. Double-tap and drag to select.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Full keyboard</div>
+          <div class="desc">Type live to your PC, plus arrows, Esc, Tab, and Ctrl/Alt/Win shortcuts like Ctrl+C.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Finds your PC</div>
+          <div class="desc">Auto-discovers the server on your Wi-Fi — or just type the IP it shows you.</div>
+        </div>
+        <div class="feature">
+          <div class="name">PIN-secured</div>
+          <div class="desc">A PIN pairs your phone to your PC, so nobody else on the network can take over.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Local &amp; private</div>
+          <div class="desc">Talks straight to your PC on your own network. No cloud, no sign-in, nothing collected.</div>
+        </div>
+        <div class="feature">
+          <div class="name">One-tap install</div>
+          <div class="desc">The PC server is a single installer — it even opens the Windows Firewall for you.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>Quick start</h2>
+      <details class="quickstart">
+        <summary>Get going in 2 minutes</summary>
+        <div class="body">
+          <h3>Step 1 &mdash; Install the PC server</h3>
+          <ol>
+            <li>Download <b>JawnRemote-Server-Setup.exe</b> (button above) and run it.</li>
+            <li>Click <b>Yes</b> on the one Windows prompt, then Next &rarr; Install &rarr; Finish.</li>
+            <li>A small window opens showing your PC's <b>address</b> and a <b>PIN</b>. Leave it running.</li>
+          </ol>
+          <div class="callout">
+            The installer opens the firewall on all networks automatically — the
+            thing that breaks other remotes on Windows 11.
+          </div>
+          <h3>Step 2 &mdash; Get the app</h3>
+          <ol>
+            <li>Install <b>JawnRemote</b> from Google Play on your phone.</li>
+            <li>Make sure the phone is on the <b>same Wi-Fi</b> as the PC.</li>
+          </ol>
+          <h3>Step 3 &mdash; Connect</h3>
+          <ol>
+            <li>Open the app. Your PC appears under <b>Discovered</b> &mdash; tap it.</li>
+            <li>Enter the <b>PIN</b> from the server window. That's it.</li>
+            <li>(If it isn't found automatically, tap <b>Add PC</b> and type the IP shown on the PC.)</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <section class="block gestures">
+      <h2>Gestures</h2>
+      <table>
+        <tr><td class="key">One-finger drag</td><td>Move the cursor</td></tr>
+        <tr><td class="key">One-finger tap</td><td>Left click</td></tr>
+        <tr><td class="key">Two-finger tap</td><td>Right click</td></tr>
+        <tr><td class="key">Two-finger drag</td><td>Scroll</td></tr>
+        <tr><td class="key">Double-tap + drag</td><td>Hold &amp; drag (select text / move windows)</td></tr>
+        <tr><td class="key">Keyboard button</td><td>Type, with arrows, Esc, Tab &amp; modifier shortcuts</td></tr>
+      </table>
+    </section>
+
+    <p class="price-note">
+      <b>Free</b> with a small banner ad &mdash; or a one-time <b>$1.99</b> in-app
+      purchase removes ads forever. No subscriptions.
+    </p>
+  </main>
+
+  <footer>
+    <span>&copy; 2026 Jawnston Inc.<span class="dot">.</span></span>
+    <span>jawnston.com/jawnremote</span>
+  </footer>
+</body>
+</html>
