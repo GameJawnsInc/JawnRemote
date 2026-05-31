@@ -47,6 +47,13 @@ if ($LASTEXITCODE -ne 0) { throw "mkdir failed (exit $LASTEXITCODE)" }
 Write-Host "[2/3] Uploading index.html..." -ForegroundColor Yellow
 scp -O $indexFile "${SshHost}:$RemoteFile"
 if ($LASTEXITCODE -ne 0) { throw "scp failed (exit $LASTEXITCODE)" }
+# Privacy policy (required by Google Play because the app shows ads).
+$privacyFile = Join-Path $scriptDir "privacy.html"
+if (Test-Path $privacyFile) {
+    Write-Host "      uploading privacy.html..." -ForegroundColor Yellow
+    scp -O $privacyFile "${SshHost}:$RemoteDir/privacy.html"
+    if ($LASTEXITCODE -ne 0) { throw "scp privacy.html failed (exit $LASTEXITCODE)" }
+}
 
 # --- [3/3] Fix ownership so Caddy can read it -------------------------
 Write-Host "[3/3] Fixing ownership via ssh..." -ForegroundColor Yellow
