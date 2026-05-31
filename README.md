@@ -106,6 +106,7 @@ one for development: `py server.py`.
     widgets/
       trackpad.dart           gesture engine
       keyboard_bar.dart       typing + special keys + modifiers
+      air_mouse_pad.dart      gyro "air mouse" — point the phone like a laser
   ```
 
 ### Gestures
@@ -117,6 +118,7 @@ one for development: `py server.py`.
 | Three-finger tap | Middle click |
 | Two-finger drag | Scroll |
 | Double-tap then drag | Hold left button & drag (select) |
+| Air-mouse mode (3D toggle) | Hold to point the phone like a laser — gyroscope drives the cursor |
 
 ### Build & run (debug)
 ```
