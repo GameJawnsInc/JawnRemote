@@ -1,0 +1,15 @@
+# Normalize line endings (keeps Windows + macOS-for-iOS collaborators in sync)
+* text=auto eol=lf
+
+# Windows scripts stay CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.jks binary
+*.keystore binary
+*.aab binary
+*.apk binary
+*.exe binary
