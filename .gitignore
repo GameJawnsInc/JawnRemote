@@ -1,0 +1,50 @@
+# ---- JawnRemote ----
+
+# Server (Python)
+server/pin.txt
+server/__pycache__/
+server/build/
+server/dist/
+server/*.spec
+*.pyc
+
+# ---- Flutter / Dart (app/) ----
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/.gradle/
+app/**/generated/
+.flutter-versions
+
+# ---- Android ----
+app/android/.gradle/
+app/android/local.properties
+app/android/key.properties
+*.jks
+*.keystore
+app/android/app/release/
+
+# ---- iOS / macOS ----
+app/ios/Pods/
+app/ios/.symlinks/
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+**/*.iml
+
+# ---- Editors / OS ----
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
+
+# Test screenshots captured during development
+_shots/
+
+# Built artifacts (distribute via Play Store / GitHub Releases, not git)
+*.apk
+*.aab
+installer/Output/
+
+# Generated launcher icons are reproducible from tools/make_icon.py + flutter_launcher_icons
