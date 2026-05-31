@@ -7,6 +7,10 @@
 #   powershell -ExecutionPolicy Bypass -File tools\publish_github.ps1
 
 $ErrorActionPreference = "Stop"
+# We check native exit codes ourselves (see GHOk). Stop PowerShell 7.4+ from
+# THROWING when a native command exits non-zero -- otherwise `gh repo view` on a
+# repo that doesn't exist yet aborts the script instead of returning a code.
+$PSNativeCommandUseErrorActionPreference = $false
 Set-Location (Split-Path $PSScriptRoot -Parent)   # repo root
 
 $Version       = "v1.0.0"
