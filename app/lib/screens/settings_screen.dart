@@ -6,11 +6,13 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final s = AppScope.of(context).settings;
+    final scope = AppScope.of(context);
+    final s = scope.settings;
+    final billing = scope.billing;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListenableBuilder(
-        listenable: s,
+        listenable: Listenable.merge([s, billing]),
         builder: (context, _) => ListView(
           children: [
             ListTile(
@@ -76,6 +78,30 @@ class SettingsScreen extends StatelessWidget {
                 if (v != null) s.setDeviceName(v);
               },
             ),
+            const Divider(height: 24),
+            if (billing.isPro)
+              const ListTile(
+                leading: Icon(Icons.verified, color: Color(0xFF3DDC84)),
+                title: Text('Ads removed'),
+                subtitle: Text('Thanks for supporting JawnRemote!'),
+              )
+            else ...[
+              ListTile(
+                leading: const Icon(Icons.block),
+                title: Text('Remove ads — ${billing.price}'),
+                subtitle: Text(billing.canBuy
+                    ? 'One-time purchase'
+                    : 'Unavailable right now (sign in to Google Play, or try later)'),
+                enabled: billing.canBuy,
+                onTap: billing.canBuy ? billing.buyRemoveAds : null,
+              ),
+              ListTile(
+                leading: const Icon(Icons.restore),
+                title: const Text('Restore purchase'),
+                onTap: billing.restore,
+              ),
+            ],
+            const Divider(height: 24),
             const Padding(
               padding: EdgeInsets.all(20),
               child: Text(

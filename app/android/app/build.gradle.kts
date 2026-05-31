@@ -26,7 +26,8 @@ android {
 
     defaultConfig {
         applicationId = "com.jawnstoninc.jawnremote"
-        minSdk = flutter.minSdkVersion
+        // google_mobile_ads (GMA SDK) requires API 24+.
+        minSdk = maxOf(24, flutter.minSdkVersion)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

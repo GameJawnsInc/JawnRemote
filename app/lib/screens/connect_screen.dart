@@ -5,6 +5,7 @@ import '../models/host.dart';
 import '../services/discovery.dart';
 import 'remote_screen.dart';
 import 'settings_screen.dart';
+import '../widgets/banner_ad.dart';
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({super.key});
@@ -98,7 +99,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
     return ListenableBuilder(
-      listenable: scope.settings,
+      listenable: Listenable.merge([scope.settings, scope.billing]),
       builder: (context, _) {
         final saved = scope.settings.hosts;
         final savedIps = saved.map((h) => h.ip).toSet();
@@ -120,6 +121,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
             icon: const Icon(Icons.add),
             label: const Text('Add PC'),
           ),
+          bottomNavigationBar:
+              scope.billing.isPro ? null : const BannerAdBar(),
           body: ListView(
             padding: const EdgeInsets.only(bottom: 88),
             children: [

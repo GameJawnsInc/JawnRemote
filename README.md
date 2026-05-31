@@ -129,6 +129,24 @@ over and tap it, enabling "install unknown apps").
 
 ---
 
+## Monetization (free + "Remove ads")
+Free download with a banner ad; a **$1.99 one-time in-app purchase** (`remove_ads`) hides
+ads permanently. Ads appear only on the connect/settings screens — **never the trackpad**.
+The app currently uses Google's **test** ad/billing IDs so it runs anywhere.
+
+**Before launch — swap in your real AdMob IDs:**
+1. Create an [AdMob](https://admob.google.com) account → add app → create a **Banner** unit.
+2. Replace the test **App ID** in `app/android/app/src/main/AndroidManifest.xml`
+   (`com.google.android.gms.ads.APPLICATION_ID`) and the test **banner unit id** in
+   `app/lib/widgets/banner_ad.dart` (`_adUnitId`). For iOS later, add
+   `GADApplicationIdentifier` to `app/ios/Runner/Info.plist`.
+
+**Create the purchase in Play Console:**
+- Monetize → Products → **In-app products** → new managed product, id **`remove_ads`**,
+  price **$1.99**, status **Active**.
+- Test on the **Internal testing** track with a license-tester account. (IAP can't be
+  tested on the emulator — the button shows "Unavailable" there, which is expected.)
+
 ## Play Store release build
 
 1. **Create a signing key** (keep this file safe — losing it means you can't update the app):
