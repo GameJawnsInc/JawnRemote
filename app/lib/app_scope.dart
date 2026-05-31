@@ -2,18 +2,21 @@ import 'package:flutter/widgets.dart';
 import 'services/settings.dart';
 import 'services/remote_client.dart';
 import 'services/discovery.dart';
+import 'services/billing.dart';
 
 /// Provides the shared service singletons to the widget tree.
 class AppScope extends InheritedWidget {
   final Settings settings;
   final RemoteClient client;
   final Discovery discovery;
+  final BillingService billing;
 
   const AppScope({
     super.key,
     required this.settings,
     required this.client,
     required this.discovery,
+    required this.billing,
     required super.child,
   });
 
