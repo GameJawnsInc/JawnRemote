@@ -18,6 +18,11 @@ import tkinter as tk
 
 import server as srv
 
+try:
+    import tray_win
+except Exception:
+    tray_win = None
+
 APP_NAME = "JawnRemote"
 PORT = srv.DEFAULT_PORT
 FW_RULE = "JawnRemote"
@@ -109,6 +114,10 @@ class App:
         self._start_server()
         self._poll_events()
         self._refresh_firewall()
+
+        self._tray_hint = os.path.join(data_dir(), "tray_hint_shown")
+        self.tray = None
+        self._setup_tray()
 
     # ---- server ----
     def _start_server(self):
@@ -217,6 +226,65 @@ class App:
 
     def _on_autostart(self):
         set_autostart(self.autostart_var.get())
+
+    # ---- tray (close-to-tray instead of full shutdown) ----
+    def _setup_tray(self):
+        if tray_win is None:
+            return
+        try:
+            self.root.update_idletasks()   # ensure the OS window exists
+            base = getattr(sys, "_MEIPASS",
+                           os.path.dirname(os.path.abspath(__file__)))
+            ico = os.path.join(base, "JawnRemoteServer.ico")
+            hwnd = tray_win.host_hwnd(self.root)
+            self.tray = tray_win.TrayIcon(
+                hwnd, ico, f"{APP_NAME} — phone mouse & keyboard",
+                on_show=self._tray_show, on_quit=self._tray_quit)
+            # With a tray icon present, the X button hides instead of quitting.
+            self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
+        except Exception:
+            # Tray is optional: if anything fails, leave the normal X behavior
+            # (don't trap the window with no way to bring it back).
+            self.tray = None
+
+    def _hide_to_tray(self):
+        self.root.withdraw()
+        if self.tray and not os.path.exists(self._tray_hint):
+            self.tray.show_balloon(
+                APP_NAME,
+                "Still running here. Click the icon to reopen, "
+                "or right-click it to quit.")
+            try:
+                open(self._tray_hint, "w").close()
+            except Exception:
+                pass
+
+    def _tray_show(self):
+        self.root.after(0, self._do_show)
+
+    def _do_show(self):
+        self.root.deiconify()
+        self.root.lift()
+        try:
+            self.root.focus_force()
+        except Exception:
+            pass
+
+    def _tray_quit(self):
+        self.root.after(0, self._do_quit)
+
+    def _do_quit(self):
+        try:
+            if self.tray:
+                self.tray.remove()
+        except Exception:
+            pass
+        try:
+            self.server.shutdown()
+            self.server.server_close()
+        except Exception:
+            pass
+        self.root.destroy()
 
 
 def main():
