@@ -3,18 +3,21 @@ System-tray icon for the JawnRemote server, implemented with pure ctypes
 (Shell_NotifyIcon). No third-party packages, so it adds ~nothing to the bundle
 (the .ico is already shipped).
 
-Design: it subclasses the host window's WndProc on the main (tkinter) thread, so
-tray callbacks run where it is safe to touch tkinter -- no extra threads, no
-cross-thread marshaling. Unhandled messages are forwarded to tkinter's original
-WndProc, so the window keeps working normally (including the WM_DELETE_WINDOW
-protocol the host uses to hide-to-tray).
+Design: it subclasses the host window's WndProc to receive the tray's callback
+message. CRITICAL: the WndProc is invoked by Windows in the middle of tkinter's
+own message dispatch, so it must NEVER call tkinter/Tcl -- doing so re-enters the
+Tcl event loop from a raw Win32 callback and corrupts the interpreter's thread
+state ("PyEval_RestoreThread ... thread state is NULL" -> hard crash). So the
+WndProc only records actions (a list append) and runs the Win32 menu; the host
+drains those actions from an after() loop, where touching tkinter is safe:
 
-Usage:
     hwnd = tray_win.host_hwnd(root)
-    tray = tray_win.TrayIcon(hwnd, ico_path, "tooltip",
-                             on_show=..., on_quit=...)   # both fire on the tk thread
-    tray.show_balloon("Title", "message")
-    tray.remove()
+    tray = tray_win.TrayIcon(hwnd, ico_path, "tooltip")
+    # in an after() loop on the tk thread:
+    for action in tray.poll():        # 'show' | 'quit'
+        ...
+    tray.show_balloon("Title", "msg") # call from the tk thread
+    tray.remove()                     # call from the tk thread
 """
 import ctypes
 from ctypes import wintypes
@@ -140,10 +143,11 @@ def host_hwnd(tk_window):
 
 
 class TrayIcon:
-    def __init__(self, hwnd, icon_path, tooltip, on_show, on_quit):
+    def __init__(self, hwnd, icon_path, tooltip):
         self.hwnd = hwnd
-        self.on_show = on_show
-        self.on_quit = on_quit
+        # Actions recorded by the WndProc, drained by the host's after() loop.
+        # WndProc and poll() both run on the tk thread, so a plain list is fine.
+        self._actions = []
         self._removed = False
 
         # Load the icon at small-icon size; fall back to the generic app icon.
@@ -158,7 +162,7 @@ class TrayIcon:
         if not self._hicon:
             self._hicon = user32.LoadIconW(None, ctypes.c_void_p(IDI_APPLICATION))
 
-        # Subclass the host window so tray callbacks arrive on this (tk) thread.
+        # Subclass the host window so the tray callback message reaches us.
         # Keep the WNDPROC object alive on self, or it gets GC'd and we crash.
         self._wndproc = WNDPROC(self._handle)
         self._old_proc = _SetWindowLongPtr(
@@ -175,12 +179,12 @@ class TrayIcon:
         Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
         self._nid = nid
 
-    # --- WndProc (runs on the tkinter thread) ---
+    # --- WndProc: runs during Windows message dispatch. NO tkinter/Tcl here. ---
     def _handle(self, hwnd, msg, wparam, lparam):
         if msg == TRAY_CALLBACK:
             event = lparam & 0xFFFF
             if event in (WM_LBUTTONUP, WM_LBUTTONDBLCLK):
-                self._safe(self.on_show)
+                self._actions.append("show")
             elif event in (WM_RBUTTONUP, WM_CONTEXTMENU):
                 self._popup()
             return 0
@@ -189,31 +193,31 @@ class TrayIcon:
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def _popup(self):
+        # TrackPopupMenu is pure Win32 (no Tcl), so it is safe from the WndProc.
         menu = user32.CreatePopupMenu()
         user32.AppendMenuW(menu, MF_STRING, _ID_SHOW, "Show JawnRemote")
         user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
         user32.AppendMenuW(menu, MF_STRING, _ID_QUIT, "Quit")
         pt = wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(pt))
-        # Required so the menu dismisses on click-away and gets keyboard focus.
         user32.SetForegroundWindow(self.hwnd)
         cmd = user32.TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD,
                                     pt.x, pt.y, 0, self.hwnd, None)
         user32.PostMessageW(self.hwnd, WM_NULL, 0, 0)
         user32.DestroyMenu(menu)
         if cmd == _ID_SHOW:
-            self._safe(self.on_show)
+            self._actions.append("show")
         elif cmd == _ID_QUIT:
-            self._safe(self.on_quit)
+            self._actions.append("quit")
 
-    @staticmethod
-    def _safe(cb):
-        try:
-            if cb:
-                cb()
-        except Exception:
-            pass
+    def poll(self):
+        """Return and clear pending actions ('show'/'quit').
+        Call this from the tkinter thread (an after() loop) so the resulting
+        window operations happen in a safe Tcl context."""
+        actions, self._actions = self._actions, []
+        return actions
 
+    # --- these are called from the tkinter thread by the host ---
     def show_balloon(self, title, message):
         if self._removed:
             return

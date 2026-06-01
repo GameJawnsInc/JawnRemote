@@ -11,6 +11,7 @@ import socket
 import queue
 import subprocess
 import threading
+import traceback
 import ctypes
 import winreg
 
@@ -103,6 +104,10 @@ def set_autostart(enable):
 class App:
     def __init__(self, root):
         self.root = root
+        self.tray = None                       # set by _setup_tray (after the UI)
+        # In the windowed build sys.stderr is None, so an unhandled callback
+        # exception would otherwise take the whole app down. Log it instead.
+        self.root.report_callback_exception = self._log_exception
         self.events = queue.Queue()
         self.name = socket.gethostname()
         self.ips = srv.get_lan_ips()
@@ -110,14 +115,21 @@ class App:
         srv.PIN_FILE = os.path.join(data_dir(), "pin.txt")
         self.pin = srv.load_or_create_pin(None)
 
+        self._tray_hint = os.path.join(data_dir(), "tray_hint_shown")
         self._build_ui()
         self._start_server()
         self._poll_events()
         self._refresh_firewall()
-
-        self._tray_hint = os.path.join(data_dir(), "tray_hint_shown")
-        self.tray = None
         self._setup_tray()
+
+    def _log_exception(self, exc, value, tb):
+        try:
+            with open(os.path.join(data_dir(), "error.log"), "a",
+                      encoding="utf-8") as f:
+                f.write("".join(traceback.format_exception(exc, value, tb)))
+                f.write("\n")
+        except Exception:
+            pass
 
     # ---- server ----
     def _start_server(self):
@@ -139,7 +151,16 @@ class App:
                     self._set_status("Ready — waiting for your phone", MUTED)
         except queue.Empty:
             pass
-        self.root.after(200, self._poll_events)
+        # Drain tray actions HERE, on the tk thread (safe Tcl context) -- never
+        # from the WndProc, which runs during raw Windows message dispatch.
+        if self.tray is not None:
+            for action in self.tray.poll():
+                if action == "show":
+                    self._do_show()
+                elif action == "quit":
+                    self._do_quit()
+                    return  # window destroyed; stop the poll loop
+        self.root.after(100, self._poll_events)
 
     # ---- ui ----
     def _build_ui(self):
@@ -238,8 +259,8 @@ class App:
             ico = os.path.join(base, "JawnRemoteServer.ico")
             hwnd = tray_win.host_hwnd(self.root)
             self.tray = tray_win.TrayIcon(
-                hwnd, ico, f"{APP_NAME} — phone mouse & keyboard",
-                on_show=self._tray_show, on_quit=self._tray_quit)
+                hwnd, ico, f"{APP_NAME} — phone mouse & keyboard")
+            # Tray clicks are picked up by _poll_events (see self.tray.poll()).
             # With a tray icon present, the X button hides instead of quitting.
             self.root.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
         except Exception:
@@ -259,9 +280,6 @@ class App:
             except Exception:
                 pass
 
-    def _tray_show(self):
-        self.root.after(0, self._do_show)
-
     def _do_show(self):
         self.root.deiconify()
         self.root.lift()
@@ -269,9 +287,6 @@ class App:
             self.root.focus_force()
         except Exception:
             pass
-
-    def _tray_quit(self):
-        self.root.after(0, self._do_quit)
 
     def _do_quit(self):
         try:
