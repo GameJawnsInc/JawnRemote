@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'app_scope.dart';
+import 'config.dart';
 import 'services/settings.dart';
 import 'services/remote_client.dart';
 import 'services/discovery.dart';
@@ -10,7 +11,7 @@ import 'screens/connect_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  unawaited(MobileAds.instance.initialize());
+  if (kAdsEnabled) unawaited(MobileAds.instance.initialize());
 
   final settings = Settings();
   await settings.load();
