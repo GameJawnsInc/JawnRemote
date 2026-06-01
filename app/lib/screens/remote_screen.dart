@@ -1,10 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../app_scope.dart';
 import '../models/host.dart';
 import '../services/remote_client.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
-import '../widgets/air_mouse_pad.dart';
 import 'settings_screen.dart';
 
 class RemoteScreen extends StatefulWidget {
@@ -16,7 +16,7 @@ class RemoteScreen extends StatefulWidget {
 
 class _RemoteScreenState extends State<RemoteScreen> {
   bool _keyboard = false;
-  bool _air = false;
+  bool _volume = false;
   bool _saved = false;
   bool _started = false;
   RemoteClient? _client;
@@ -104,9 +104,10 @@ class _RemoteScreenState extends State<RemoteScreen> {
             ]),
             actions: [
               IconButton(
-                tooltip: _air ? 'Touchpad' : 'Air mouse',
-                icon: Icon(_air ? Icons.touch_app : Icons.threed_rotation),
-                onPressed: () => setState(() => _air = !_air),
+                tooltip: 'Volume',
+                isSelected: _volume,
+                icon: const Icon(Icons.volume_up),
+                onPressed: () => setState(() => _volume = !_volume),
               ),
               IconButton(
                 tooltip: 'Keyboard',
@@ -132,10 +133,9 @@ class _RemoteScreenState extends State<RemoteScreen> {
       case ConnState.connected:
         return Column(children: [
           Expanded(
-            child: _air
-                ? AirMousePad(client: client, settings: scope.settings)
-                : Trackpad(client: client, settings: scope.settings),
+            child: Trackpad(client: client, settings: scope.settings),
           ),
+          if (_volume) _VolumeBar(client: client),
           _MouseButtons(client: client),
           if (_keyboard) KeyboardBar(client: client),
         ]);
@@ -223,6 +223,107 @@ class _MouseButtons extends StatelessWidget {
         b('•', 'middle', 1),
         b('Right', 'right', 3),
       ]),
+    );
+  }
+}
+
+/// System-volume controls. Sends the media volume keys to the PC (the server
+/// maps these to VK_VOLUME_*). Up/down repeat while held.
+class _VolumeBar extends StatelessWidget {
+  final RemoteClient client;
+  const _VolumeBar({required this.client});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF0E1116),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Row(children: [
+        Expanded(
+          flex: 3,
+          child: _HoldRepeatButton(
+            icon: Icons.volume_down,
+            onFire: () => client.key('volumedown'),
+          ),
+        ),
+        Expanded(
+          flex: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: SizedBox(
+              height: 54,
+              child: FilledButton.tonal(
+                onPressed: () => client.key('volumemute'),
+                child: const Icon(Icons.volume_off, size: 24),
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          flex: 3,
+          child: _HoldRepeatButton(
+            icon: Icons.volume_up,
+            onFire: () => client.key('volumeup'),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+/// A tonal button that fires once on press and then repeats while held —
+/// natural for nudging the volume.
+class _HoldRepeatButton extends StatefulWidget {
+  final IconData icon;
+  final VoidCallback onFire;
+  const _HoldRepeatButton({required this.icon, required this.onFire});
+  @override
+  State<_HoldRepeatButton> createState() => _HoldRepeatButtonState();
+}
+
+class _HoldRepeatButtonState extends State<_HoldRepeatButton> {
+  Timer? _delay;
+  Timer? _repeat;
+
+  void _start() {
+    widget.onFire(); // immediate step
+    _delay?.cancel();
+    _delay = Timer(const Duration(milliseconds: 350), () {
+      _repeat?.cancel();
+      _repeat = Timer.periodic(
+          const Duration(milliseconds: 110), (_) => widget.onFire());
+    });
+  }
+
+  void _stop() {
+    _delay?.cancel();
+    _repeat?.cancel();
+    _delay = null;
+    _repeat = null;
+  }
+
+  @override
+  void dispose() {
+    _stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(4),
+      child: SizedBox(
+        height: 54,
+        child: Listener(
+          onPointerDown: (_) => _start(),
+          onPointerUp: (_) => _stop(),
+          onPointerCancel: (_) => _stop(),
+          child: FilledButton.tonal(
+            onPressed: () {}, // visual feedback only; firing handled above
+            child: Icon(widget.icon, size: 26),
+          ),
+        ),
+      ),
     );
   }
 }
