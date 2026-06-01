@@ -22,6 +22,7 @@ import sys
 import threading
 
 import input_win as inp
+import power_win as pwr
 
 APP = "JawnRemote"
 VERSION = 1
@@ -158,6 +159,10 @@ class Handler(socketserver.StreamRequestHandler):
             k = msg.get("k")
             if k:
                 inp.key(k, msg.get("m") or [])
+        elif t == "power":
+            action = msg.get("action", "")
+            if pwr.power(action):
+                log(f"    power: {action}")
 
 
 class Server(socketserver.ThreadingTCPServer):
