@@ -6,6 +6,7 @@ import '../services/remote_client.dart';
 import '../services/hardware_volume.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
+import 'presentation_screen.dart';
 import 'settings_screen.dart';
 
 class RemoteScreen extends StatefulWidget {
@@ -164,6 +165,14 @@ class _RemoteScreenState extends State<RemoteScreen> {
                 tooltip: 'Keyboard',
                 icon: Icon(_keyboard ? Icons.keyboard_hide : Icons.keyboard),
                 onPressed: () => setState(() => _keyboard = !_keyboard),
+              ),
+              IconButton(
+                tooltip: 'Presentation',
+                icon: const Icon(Icons.slideshow),
+                onPressed: client.isConnected
+                    ? () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => PresentationScreen(client: client)))
+                    : null,
               ),
               PopupMenuButton<String>(
                 tooltip: 'Power',
