@@ -9,7 +9,6 @@ class Settings extends ChangeNotifier {
 
   double sensitivity = 1.4; // pointer speed multiplier
   double scrollSpeed = 6.0; // wheel units per logical pixel
-  double airSensitivity = 60.0; // air-mouse: px per (rad/s) per sample
   bool naturalScroll = false; // false = drag down scrolls page down
   bool tapToClick = true;
   bool keepScreenOn = true;
@@ -20,7 +19,6 @@ class Settings extends ChangeNotifier {
     _p = await SharedPreferences.getInstance();
     sensitivity = _p.getDouble('sensitivity') ?? 1.4;
     scrollSpeed = _p.getDouble('scrollSpeed') ?? 6.0;
-    airSensitivity = _p.getDouble('airSensitivity') ?? 60.0;
     naturalScroll = _p.getBool('naturalScroll') ?? false;
     tapToClick = _p.getBool('tapToClick') ?? true;
     keepScreenOn = _p.getBool('keepScreenOn') ?? true;
@@ -48,12 +46,6 @@ class Settings extends ChangeNotifier {
   Future<void> setScrollSpeed(double v) async {
     scrollSpeed = v;
     await _p.setDouble('scrollSpeed', v);
-    notifyListeners();
-  }
-
-  Future<void> setAirSensitivity(double v) async {
-    airSensitivity = v;
-    await _p.setDouble('airSensitivity', v);
     notifyListeners();
   }
 

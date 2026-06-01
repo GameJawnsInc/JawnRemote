@@ -37,17 +37,6 @@ class SettingsScreen extends StatelessWidget {
                 onChanged: s.setScrollSpeed,
               ),
             ),
-            ListTile(
-              title: const Text('Air-mouse sensitivity'),
-              subtitle: Slider(
-                min: 10,
-                max: 200,
-                divisions: 19,
-                value: s.airSensitivity.clamp(10, 200),
-                label: s.airSensitivity.toStringAsFixed(0),
-                onChanged: s.setAirSensitivity,
-              ),
-            ),
             SwitchListTile(
               title: const Text('Natural scrolling'),
               subtitle: const Text('Content follows your fingers'),
