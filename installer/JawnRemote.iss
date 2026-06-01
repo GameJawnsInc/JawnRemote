@@ -6,7 +6,7 @@
 ; ALL network profiles (incl. Public) -- the thing that breaks UnifiedRemote.
 
 #define MyAppName "JawnRemote"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "Jawnston Inc."
 #define MyAppExeName "JawnRemoteServer.exe"
 #define Port "8770"

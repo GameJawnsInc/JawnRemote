@@ -11,6 +11,7 @@ class RemoteClient extends ChangeNotifier {
   Socket? _sock;
   ConnState state = ConnState.disconnected;
   String serverName = '';
+  String serverMac = '';
   String lastError = '';
 
   /// Quick-launch apps configured on the PC (empty for older servers, which
@@ -90,6 +91,7 @@ class RemoteClient extends ChangeNotifier {
       case 'welcome':
         if (msg['ok'] == true) {
           serverName = (msg['server'] ?? _host).toString();
+          serverMac = (msg['mac'] ?? '').toString();
           _retry = 0;
           _setState(ConnState.connected);
         } else {
