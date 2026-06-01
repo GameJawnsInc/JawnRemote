@@ -12,10 +12,17 @@
        X-Robots-Tag header for this path in the Caddyfile. -->
   <meta name="robots" content="noindex, nofollow">
 
-  <!-- Open Graph / share preview -->
+  <!-- Open Graph / share preview (Discord, iMessage, Slack, etc.). Embed
+       crawlers are allowlisted in jawnston.com/robots.txt despite the noindex
+       above. Replace og-image.png with a 1200x630 banner. -->
   <meta property="og:title" content="JawnRemote — your phone is the mouse & keyboard">
   <meta property="og:description" content="Turn your phone into a wireless mouse and keyboard for your Windows PC over Wi-Fi.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jawnston.com/jawnremote/">
+  <meta property="og:image" content="https://jawnston.com/jawnremote/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
 
   <style>
     :root {
@@ -235,31 +242,35 @@
       <div class="features">
         <div class="feature">
           <div class="name">Trackpad</div>
-          <div class="desc">Drag to move, tap to click, two fingers to right-click or scroll. Double-tap and drag to select.</div>
+          <div class="desc">Move, click, scroll, drag.</div>
         </div>
         <div class="feature">
           <div class="name">Full keyboard</div>
-          <div class="desc">Type live to your PC, plus arrows, Esc, Tab, and Ctrl/Alt/Win shortcuts like Ctrl+C.</div>
+          <div class="desc">Live typing and shortcuts.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Media &amp; volume</div>
+          <div class="desc">Play/pause, skip, and the volume rocker.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Power</div>
+          <div class="desc">Lock, sleep, restart, shut down.</div>
         </div>
         <div class="feature">
           <div class="name">Finds your PC</div>
-          <div class="desc">Auto-discovers the server on your Wi-Fi — or just type the IP it shows you.</div>
+          <div class="desc">Auto-found on your Wi-Fi.</div>
         </div>
         <div class="feature">
           <div class="name">PIN-secured</div>
-          <div class="desc">A PIN pairs your phone to your PC, so nobody else on the network can take over.</div>
+          <div class="desc">Paired with a PIN.</div>
         </div>
         <div class="feature">
           <div class="name">Local &amp; private</div>
-          <div class="desc">Talks straight to your PC on your own network. No cloud, no sign-in, nothing collected.</div>
+          <div class="desc">No cloud, no sign-in.</div>
         </div>
         <div class="feature">
           <div class="name">One-tap install</div>
-          <div class="desc">The PC server is a single installer — it even opens the Windows Firewall for you.</div>
-        </div>
-        <div class="feature">
-          <div class="name">Air mouse</div>
-          <div class="desc">Point the phone like a laser — hold the button and aim. Uses the gyroscope; great from the couch.</div>
+          <div class="desc">One installer, firewall included.</div>
         </div>
       </div>
     </section>

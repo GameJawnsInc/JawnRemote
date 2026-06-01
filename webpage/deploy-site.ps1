@@ -55,6 +55,16 @@ if (Test-Path $privacyFile) {
     if ($LASTEXITCODE -ne 0) { throw "scp privacy.html failed (exit $LASTEXITCODE)" }
 }
 
+# --- [2b/3] Upload og-image.png if present (optional share-preview banner) ---
+# The OG <meta> tags point at jawnremote/og-image.png; the 1200x630 banner is
+# optional. The chown -R on $RemoteDir below already covers it.
+$ogImageFile = Join-Path $scriptDir "og-image.png"
+if (Test-Path $ogImageFile) {
+    Write-Host "      uploading og-image.png..." -ForegroundColor Yellow
+    scp -O $ogImageFile "${SshHost}:$RemoteDir/og-image.png"
+    if ($LASTEXITCODE -ne 0) { throw "scp og-image.png failed (exit $LASTEXITCODE)" }
+}
+
 # --- [3/3] Fix ownership so Caddy can read it -------------------------
 Write-Host "[3/3] Fixing ownership via ssh..." -ForegroundColor Yellow
 ssh -n -o BatchMode=yes $SshHost "chown -R caddy:caddy '$RemoteDir'"
