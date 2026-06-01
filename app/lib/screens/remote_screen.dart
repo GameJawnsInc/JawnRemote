@@ -4,6 +4,7 @@ import '../app_scope.dart';
 import '../models/host.dart';
 import '../services/remote_client.dart';
 import '../services/hardware_volume.dart';
+import '../services/wol.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
 import 'apps_screen.dart';
@@ -61,9 +62,22 @@ class _RemoteScreenState extends State<RemoteScreen> {
     final scope = AppScope.of(context);
     final name =
         client.serverName.isNotEmpty ? client.serverName : widget.host.name;
+    final mac =
+        client.serverMac.isNotEmpty ? client.serverMac : widget.host.mac;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      scope.settings.upsertHost(widget.host.copyWith(name: name));
+      scope.settings.upsertHost(widget.host.copyWith(name: name, mac: mac));
     });
+  }
+
+  Future<void> _wake(RemoteHost host) async {
+    final ok = await sendMagicPacket(host.mac, ip: host.ip);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'Wake signal sent to ${host.name}. Give it a few seconds…'
+          : 'Couldn\'t send the wake signal.'),
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   Future<void> _reenterPin(RemoteClient client) async {
@@ -193,6 +207,26 @@ class _RemoteScreenState extends State<RemoteScreen> {
     );
   }
 
+  /// Media + mouse buttons + keyboard, below the trackpad. Capped and
+  /// scrollable so the column never overflows in landscape or when the soft
+  /// keyboard pushes the layout up.
+  Widget _bottomPanels(RemoteClient client) {
+    final maxH = MediaQuery.of(context).size.height * 0.62;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxH),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_media) _MediaBar(client: client),
+            _MouseButtons(client: client),
+            if (_keyboard) KeyboardBar(client: client),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
@@ -242,9 +276,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
           Expanded(
             child: Trackpad(client: client, settings: scope.settings),
           ),
-          if (_media) _MediaBar(client: client),
-          _MouseButtons(client: client),
-          if (_keyboard) KeyboardBar(client: client),
+          _bottomPanels(client),
         ]);
       case ConnState.authFailed:
         return _Message(
@@ -263,6 +295,9 @@ class _RemoteScreenState extends State<RemoteScreen> {
           actionLabel: 'Retry',
           onAction: () =>
               client.connect(widget.host.ip, widget.host.port, widget.host.pin),
+          secondaryLabel: widget.host.mac.isNotEmpty ? 'Wake PC' : null,
+          onSecondary:
+              widget.host.mac.isNotEmpty ? () => _wake(widget.host) : null,
         );
       default:
         return _Message(
@@ -512,6 +547,8 @@ class _Message extends StatelessWidget {
   final String detail;
   final String? actionLabel;
   final VoidCallback? onAction;
+  final String? secondaryLabel;
+  final VoidCallback? onSecondary;
   final bool showSpinner;
   const _Message({
     required this.icon,
@@ -519,6 +556,8 @@ class _Message extends StatelessWidget {
     required this.detail,
     this.actionLabel,
     this.onAction,
+    this.secondaryLabel,
+    this.onSecondary,
     this.showSpinner = false,
   });
 
@@ -548,6 +587,10 @@ class _Message extends StatelessWidget {
             if (actionLabel != null) ...[
               const SizedBox(height: 22),
               FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+            ],
+            if (secondaryLabel != null) ...[
+              const SizedBox(height: 8),
+              TextButton(onPressed: onSecondary, child: Text(secondaryLabel!)),
             ],
           ],
         ),

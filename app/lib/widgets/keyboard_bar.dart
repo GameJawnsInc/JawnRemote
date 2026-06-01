@@ -163,10 +163,10 @@ class _KeyboardBarState extends State<KeyboardBar> {
           const SizedBox(height: 6),
           // Navigation + editing cluster.
           _scrollRow([
-            _btn('◀', 'left', w: 46),
-            _btn('▲', 'up', w: 46),
-            _btn('▼', 'down', w: 46),
-            _btn('▶', 'right', w: 46),
+            _btn('←', 'left', w: 46),
+            _btn('↑', 'up', w: 46),
+            _btn('↓', 'down', w: 46),
+            _btn('→', 'right', w: 46),
             const SizedBox(width: 10),
             _btn('Home', 'home', w: 58),
             _btn('End', 'end'),

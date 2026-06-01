@@ -4,6 +4,7 @@ import '../app_scope.dart';
 import '../config.dart';
 import '../models/host.dart';
 import '../services/discovery.dart';
+import '../services/wol.dart';
 import 'remote_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/banner_ad.dart';
@@ -50,6 +51,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
         setState(() {});
       }
     });
+  }
+
+  Future<void> _wake(RemoteHost h) async {
+    final ok = await sendMagicPacket(h.mac, ip: h.ip);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(ok
+          ? 'Wake signal sent to ${h.name}. Give it a few seconds…'
+          : 'Couldn\'t send the wake signal.'),
+      behavior: SnackBarBehavior.floating,
+    ));
   }
 
   Future<void> _addManually() async {
@@ -134,6 +146,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     subtitle: '${h.ip}:${h.port}',
                     icon: Icons.computer,
                     onTap: () => _open(h),
+                    onWake: h.mac.isNotEmpty ? () => _wake(h) : null,
                     onDelete: () => scope.settings.removeHost(h),
                   )),
               const _Header('Discovered on Wi-Fi'),
@@ -193,12 +206,14 @@ class _HostTile extends StatelessWidget {
   final String title, subtitle;
   final IconData icon;
   final VoidCallback onTap;
+  final VoidCallback? onWake;
   final VoidCallback? onDelete;
   const _HostTile({
     required this.title,
     required this.subtitle,
     required this.icon,
     required this.onTap,
+    this.onWake,
     this.onDelete,
   });
   @override
@@ -211,8 +226,22 @@ class _HostTile extends StatelessWidget {
         subtitle: Text(subtitle),
         trailing: onDelete == null
             ? const Icon(Icons.chevron_right)
-            : IconButton(
-                icon: const Icon(Icons.delete_outline), onPressed: onDelete),
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onWake != null)
+                    IconButton(
+                      tooltip: 'Wake PC (Wake-on-LAN)',
+                      icon: const Icon(Icons.power_settings_new),
+                      onPressed: onWake,
+                    ),
+                  IconButton(
+                    tooltip: 'Remove',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: onDelete,
+                  ),
+                ],
+              ),
         onTap: onTap,
       ),
     );

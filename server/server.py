@@ -25,6 +25,7 @@ import input_win as inp
 import power_win as pwr
 import launch_win as lch
 import apps_store as appstore
+import netinfo_win as netinfo
 
 APP = "JawnRemote"
 VERSION = 1
@@ -131,7 +132,8 @@ class Handler(socketserver.StreamRequestHandler):
             self._who = who
             self.server.on_event("connected", who)
             return {"t": "welcome", "ok": True, "server": self.server.server_name,
-                    "app": APP, "v": VERSION}
+                    "app": APP, "v": VERSION,
+                    "mac": getattr(self.server, "mac", "")}
         if t == "ping":
             return {"t": "pong"}
         if not self.authed:
@@ -231,6 +233,11 @@ def build_server(port=DEFAULT_PORT, host="0.0.0.0", pin="", require_auth=True,
     server.require_auth = require_auth
     server.pin = pin
     server.server_name = socket.gethostname()
+    try:
+        ips = get_lan_ips()
+        server.mac = netinfo.get_primary_mac(ips[0] if ips else None)
+    except Exception:
+        server.mac = ""
     if on_event is not None:
         server.on_event = on_event
     return server
