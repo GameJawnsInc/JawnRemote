@@ -13,6 +13,10 @@ class RemoteClient extends ChangeNotifier {
   String serverName = '';
   String lastError = '';
 
+  /// Quick-launch apps configured on the PC (empty for older servers, which
+  /// makes the Apps screen fall back to its built-in defaults).
+  List<Map<String, dynamic>> serverApps = [];
+
   String _host = '';
   int _port = 8770;
   String _pin = '';
@@ -94,6 +98,13 @@ class RemoteClient extends ChangeNotifier {
           _cleanupSocket();
         }
         break;
+      case 'apps':
+        final list = msg['apps'];
+        if (list is List) {
+          serverApps = list.whereType<Map<String, dynamic>>().toList();
+          notifyListeners();
+        }
+        break;
     }
   }
 
@@ -169,6 +180,7 @@ class RemoteClient extends ChangeNotifier {
       _sendRaw({'t': 'key', 'k': k, 'm': mods});
   void power(String action) => _sendRaw({'t': 'power', 'action': action});
   void launch(String target) => _sendRaw({'t': 'launch', 'target': target});
+  void requestApps() => _sendRaw({'t': 'getapps'});
   void ping() => _sendRaw({'t': 'ping'});
 
   @override
