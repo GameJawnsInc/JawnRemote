@@ -65,14 +65,19 @@ def firewall_ok():
 
 
 def add_firewall_rules():
-    """Add inbound TCP+UDP allow rules (self-elevates with one UAC prompt)."""
+    """Add inbound TCP+UDP allow rules (self-elevates with one UAC prompt).
+
+    Scoped to remoteip=localsubnet so only devices on your own network can
+    reach the server -- the open port is invisible to the internet. profile=any
+    is kept so it works even when Windows marks your Wi-Fi as 'Public'.
+    """
     parts = [
         f'netsh advfirewall firewall delete rule name="{FW_RULE}"',
         f'netsh advfirewall firewall delete rule name="{FW_RULE} (discovery)"',
         f'netsh advfirewall firewall add rule name="{FW_RULE}" dir=in '
-        f'action=allow protocol=TCP localport={PORT} profile=any',
+        f'action=allow protocol=TCP localport={PORT} profile=any remoteip=localsubnet',
         f'netsh advfirewall firewall add rule name="{FW_RULE} (discovery)" dir=in '
-        f'action=allow protocol=UDP localport={PORT} profile=any',
+        f'action=allow protocol=UDP localport={PORT} profile=any remoteip=localsubnet',
     ]
     cmd = " & ".join(parts)
     ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c {cmd}", None, 0)

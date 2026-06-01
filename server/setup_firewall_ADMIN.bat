@@ -9,11 +9,12 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-echo Configuring Windows Firewall for JawnRemote (port 8770)...
+echo Configuring Windows Firewall for JawnRemote (port 8770, local network only)...
 netsh advfirewall firewall delete rule name="JawnRemote" >nul 2>&1
 netsh advfirewall firewall delete rule name="JawnRemote (discovery)" >nul 2>&1
-netsh advfirewall firewall add rule name="JawnRemote" dir=in action=allow protocol=TCP localport=8770 profile=any
-netsh advfirewall firewall add rule name="JawnRemote (discovery)" dir=in action=allow protocol=UDP localport=8770 profile=any
+netsh advfirewall firewall add rule name="JawnRemote" dir=in action=allow protocol=TCP localport=8770 profile=any remoteip=localsubnet
+netsh advfirewall firewall add rule name="JawnRemote (discovery)" dir=in action=allow protocol=UDP localport=8770 profile=any remoteip=localsubnet
 echo.
-echo Done. The server is now reachable from your phone over Wi-Fi (TCP+UDP 8770).
+echo Done. Reachable from your phone on the same Wi-Fi (TCP+UDP 8770), and
+echo invisible to the internet (local subnet only).
 pause

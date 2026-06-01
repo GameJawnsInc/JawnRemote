@@ -13,6 +13,7 @@ Zero external dependencies -- just run with Python 3.
   py server.py --no-auth       # no PIN (testing only)
 """
 import argparse
+import ipaddress
 import json
 import os
 import secrets
@@ -20,6 +21,7 @@ import socket
 import socketserver
 import sys
 import threading
+import time
 
 import input_win as inp
 import power_win as pwr
@@ -31,6 +33,10 @@ APP = "JawnRemote"
 VERSION = 1
 DEFAULT_PORT = 8770
 PIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pin.txt")
+
+# Brute-force protection: temporarily refuse an IP after too many bad PINs.
+MAX_PIN_FAILS = 5
+LOCKOUT_SECONDS = 60
 
 _print_lock = threading.Lock()
 
@@ -58,6 +64,14 @@ def get_lan_ips():
     except OSError:
         pass
     return ips or ["127.0.0.1"]
+
+
+def is_lan_ip(ip):
+    """True if ip is a private / loopback / link-local address (a LAN peer)."""
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
 
 
 def load_or_create_pin(override=None):
@@ -98,6 +112,11 @@ class Handler(socketserver.StreamRequestHandler):
 
     def handle(self):
         peer = self.client_address[0]
+        # Defense in depth: even if the firewall is mis-scoped or the port is
+        # forwarded, only accept LAN peers (this is a local-network remote).
+        if getattr(self.server, "lan_only", True) and not is_lan_ip(peer):
+            log(f"[!] refused non-LAN connection from {peer}")
+            return
         log(f"[+] {peer} connected")
         try:
             for raw in self.rfile:
@@ -119,17 +138,43 @@ class Handler(socketserver.StreamRequestHandler):
             if self._who:
                 self.server.on_event("disconnected", self._who)
 
+    def _auth_locked(self, peer):
+        with self.server.auth_lock:
+            return time.time() < self.server.bans.get(peer, 0)
+
+    def _record_auth_fail(self, peer):
+        with self.server.auth_lock:
+            n = self.server.fails.get(peer, 0) + 1
+            self.server.fails[peer] = n
+            if n >= MAX_PIN_FAILS:
+                self.server.bans[peer] = time.time() + LOCKOUT_SECONDS
+                self.server.fails[peer] = 0
+                log(f"[!] locked out {peer} for {LOCKOUT_SECONDS}s "
+                    f"after {MAX_PIN_FAILS} bad PINs")
+
+    def _record_auth_ok(self, peer):
+        with self.server.auth_lock:
+            self.server.fails.pop(peer, None)
+            self.server.bans.pop(peer, None)
+
     def dispatch(self, msg):
         t = msg.get("t")
         if t == "hello":
+            peer = self.client_address[0]
+            if self._auth_locked(peer):
+                log(f"    hello from {peer}: REFUSED (locked out)")
+                return {"t": "welcome", "ok": False, "err": "locked"}
             ok = (not self.server.require_auth) or \
                  (str(msg.get("pin", "")) == self.server.pin)
-            self.authed = ok
             who = msg.get("name", "device")
-            log(f"    hello from {who!r}: {'OK' if ok else 'BAD PIN'}")
             if not ok:
+                self._record_auth_fail(peer)
+                log(f"    hello from {who!r} @ {peer}: BAD PIN")
                 return {"t": "welcome", "ok": False, "err": "bad_pin"}
+            self._record_auth_ok(peer)
+            self.authed = True
             self._who = who
+            log(f"    hello from {who!r} @ {peer}: OK")
             self.server.on_event("connected", who)
             return {"t": "welcome", "ok": True, "server": self.server.server_name,
                     "app": APP, "v": VERSION,
@@ -201,7 +246,7 @@ def discovery_loop(port, server_name, stop):
             continue
         except OSError:
             break
-        if b"discover" in data.lower():
+        if b"discover" in data.lower() and is_lan_ip(addr[0]):
             try:
                 s.sendto(reply, addr)
                 log(f"    discovery probe from {addr[0]} -> replied")
@@ -227,12 +272,16 @@ def banner(name, ips, port, pin, require_auth):
 
 
 def build_server(port=DEFAULT_PORT, host="0.0.0.0", pin="", require_auth=True,
-                 on_event=None):
+                 on_event=None, lan_only=True):
     """Create a configured (not yet running) server. Shared by CLI and GUI."""
     server = Server((host, port), Handler)
     server.require_auth = require_auth
     server.pin = pin
     server.server_name = socket.gethostname()
+    server.lan_only = lan_only
+    server.auth_lock = threading.Lock()
+    server.fails = {}   # peer ip -> consecutive bad-PIN count
+    server.bans = {}    # peer ip -> unix time the lockout expires
     try:
         ips = get_lan_ips()
         server.mac = netinfo.get_primary_mac(ips[0] if ips else None)
@@ -257,13 +306,16 @@ def main():
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--pin", default=None, help="fixed PIN (else auto/saved)")
     ap.add_argument("--no-auth", action="store_true", help="disable PIN (testing)")
+    ap.add_argument("--allow-remote", action="store_true",
+                    help="accept non-LAN clients (advanced; default is LAN-only)")
     args = ap.parse_args()
 
     name = socket.gethostname()
     pin = load_or_create_pin(args.pin)
     ips = get_lan_ips()
 
-    server = build_server(args.port, args.host, pin, not args.no_auth)
+    server = build_server(args.port, args.host, pin, not args.no_auth,
+                          lan_only=not args.allow_remote)
     stop = start_discovery(args.port, name)
 
     banner(name, ips, args.port, pin, server.require_auth)

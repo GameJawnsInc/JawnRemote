@@ -3,10 +3,12 @@
 ; Produces:    installer\Output\JawnRemote-Server-Setup.exe
 ;
 ; The installer runs elevated (one UAC prompt), so it can open the firewall on
-; ALL network profiles (incl. Public) -- the thing that breaks UnifiedRemote.
+; ALL network profiles (incl. Public) -- the thing that breaks UnifiedRemote --
+; but scoped to remoteip=localsubnet so only your own LAN can reach the port.
+; The open port stays invisible to the internet.
 
 #define MyAppName "JawnRemote"
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "1.5.1"
 #define MyAppPublisher "Jawnston Inc."
 #define MyAppExeName "JawnRemoteServer.exe"
 #define Port "8770"
@@ -48,11 +50,12 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; current user's HKCU Run key at runtime -- unambiguous and user-controlled).
 
 [Run]
-; Remove any stale rules, then allow inbound on ALL profiles (incl. Public).
+; Remove any stale rules, then allow inbound on ALL profiles (incl. Public) but
+; ONLY from the local subnet -- the port is unreachable from the internet.
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#MyAppName}"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#MyAppName} (discovery)"""; Flags: runhidden
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#MyAppName}"" dir=in action=allow protocol=TCP localport={#Port} profile=any"; Flags: runhidden
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#MyAppName} (discovery)"" dir=in action=allow protocol=UDP localport={#Port} profile=any"; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#MyAppName}"" dir=in action=allow protocol=TCP localport={#Port} profile=any remoteip=localsubnet"; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#MyAppName} (discovery)"" dir=in action=allow protocol=UDP localport={#Port} profile=any remoteip=localsubnet"; Flags: runhidden
 ; Launch after install.
 Filename: "{app}\{#MyAppExeName}"; Description: "Start {#MyAppName} now"; Flags: nowait postinstall skipifsilent
 
