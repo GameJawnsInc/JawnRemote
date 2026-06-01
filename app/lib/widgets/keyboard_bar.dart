@@ -82,6 +82,13 @@ class _KeyboardBarState extends State<KeyboardBar> {
     _focus.requestFocus();
   }
 
+  /// Fire a fixed combo (e.g. Ctrl+C), independent of the sticky modifiers.
+  void _combo(String key, List<String> mods) {
+    c.key(key, mods);
+    if (_mods.isNotEmpty) setState(_mods.clear);
+    _focus.requestFocus();
+  }
+
   void _toggleMod(String m) {
     setState(() {
       if (!_mods.add(m)) _mods.remove(m);
@@ -113,6 +120,25 @@ class _KeyboardBarState extends State<KeyboardBar> {
         ),
       );
 
+  /// A one-tap shortcut button (sends a fixed combo regardless of sticky mods).
+  Widget _shortcut(String label, String key, List<String> mods) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: FilledButton.tonal(
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            visualDensity: VisualDensity.compact,
+          ),
+          onPressed: () => _combo(key, mods),
+          child: Text(label, style: const TextStyle(fontSize: 13)),
+        ),
+      );
+
+  Widget _scrollRow(List<Widget> children) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: Row(children: children),
+      );
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -121,42 +147,48 @@ class _KeyboardBarState extends State<KeyboardBar> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Row(
-              children: [
-                _modChip('Ctrl', 'ctrl'),
-                _modChip('Alt', 'alt'),
-                _modChip('Shift', 'shift'),
-                _modChip('Win', 'win'),
-                const SizedBox(width: 10),
-                _btn('Esc', 'escape'),
-                _btn('Tab', 'tab'),
-                _btn('Del', 'delete'),
-                _btn('Home', 'home', w: 58),
-                _btn('End', 'end'),
-                _btn('PgUp', 'pageup', w: 58),
-                _btn('PgDn', 'pagedown', w: 58),
-              ],
-            ),
-          ),
+          // Modifiers (sticky — tap one, then a key) + the two big standalones.
+          _scrollRow([
+            _modChip('Ctrl', 'ctrl'),
+            _modChip('Alt', 'alt'),
+            _modChip('Shift', 'shift'),
+            _modChip('Win', 'win'),
+            const SizedBox(width: 10),
+            _btn('Esc', 'escape'),
+            _btn('Tab', 'tab'),
+          ]),
           const SizedBox(height: 6),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Row(
-              children: [
-                _btn('◀', 'left'),
-                _btn('▲', 'up'),
-                _btn('▼', 'down'),
-                _btn('▶', 'right'),
-                const SizedBox(width: 10),
-                _btn('⌫', 'backspace', w: 58),
-                _btn('⏎ Enter', 'enter', w: 92),
-              ],
-            ),
-          ),
+          // Function keys (respect the sticky modifiers, e.g. Alt+F4).
+          _scrollRow([for (var i = 1; i <= 12; i++) _btn('F$i', 'f$i', w: 46)]),
+          const SizedBox(height: 6),
+          // Navigation + editing cluster.
+          _scrollRow([
+            _btn('◀', 'left', w: 46),
+            _btn('▲', 'up', w: 46),
+            _btn('▼', 'down', w: 46),
+            _btn('▶', 'right', w: 46),
+            const SizedBox(width: 10),
+            _btn('Home', 'home', w: 58),
+            _btn('End', 'end'),
+            _btn('PgUp', 'pageup', w: 58),
+            _btn('PgDn', 'pagedown', w: 58),
+            const SizedBox(width: 10),
+            _btn('Ins', 'insert'),
+            _btn('Del', 'delete'),
+            _btn('⌫', 'backspace', w: 46),
+            _btn('⏎', 'enter', w: 46),
+          ]),
+          const SizedBox(height: 6),
+          // One-tap shortcuts.
+          _scrollRow([
+            _shortcut('Copy', 'c', ['ctrl']),
+            _shortcut('Cut', 'x', ['ctrl']),
+            _shortcut('Paste', 'v', ['ctrl']),
+            _shortcut('Undo', 'z', ['ctrl']),
+            _shortcut('Redo', 'y', ['ctrl']),
+            _shortcut('Select all', 'a', ['ctrl']),
+            _shortcut('Alt+Tab', 'tab', ['alt']),
+          ]),
           const SizedBox(height: 6),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
