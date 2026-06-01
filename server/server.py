@@ -23,6 +23,7 @@ import threading
 
 import input_win as inp
 import power_win as pwr
+import launch_win as lch
 
 APP = "JawnRemote"
 VERSION = 1
@@ -163,6 +164,10 @@ class Handler(socketserver.StreamRequestHandler):
             action = msg.get("action", "")
             if pwr.power(action):
                 log(f"    power: {action}")
+        elif t == "launch":
+            target = msg.get("target", "")
+            if lch.launch(target):
+                log(f"    launch: {target}")
 
 
 class Server(socketserver.ThreadingTCPServer):
