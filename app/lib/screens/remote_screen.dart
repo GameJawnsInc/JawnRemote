@@ -6,6 +6,7 @@ import '../services/remote_client.dart';
 import '../services/hardware_volume.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
+import 'apps_screen.dart';
 import 'presentation_screen.dart';
 import 'settings_screen.dart';
 
@@ -151,6 +152,14 @@ class _RemoteScreenState extends State<RemoteScreen> {
               label: 'Keyboard',
               active: _keyboard,
               onTap: () => setState(() => _keyboard = !_keyboard),
+            ),
+          ),
+          Expanded(
+            child: _FeatureCell(
+              icon: Icons.apps,
+              label: 'Apps',
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => AppsScreen(client: client))),
             ),
           ),
           Expanded(
