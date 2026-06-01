@@ -24,6 +24,7 @@ import threading
 import input_win as inp
 import power_win as pwr
 import launch_win as lch
+import apps_store as appstore
 
 APP = "JawnRemote"
 VERSION = 1
@@ -135,6 +136,8 @@ class Handler(socketserver.StreamRequestHandler):
             return {"t": "pong"}
         if not self.authed:
             return {"t": "error", "err": "unauthorized"}
+        if t == "getapps":
+            return {"t": "apps", "apps": appstore.load_apps()}
         try:
             self.do_input(t, msg)
         except Exception as e:  # never let one bad event kill the stream

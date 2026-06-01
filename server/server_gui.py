@@ -18,6 +18,7 @@ import winreg
 import tkinter as tk
 
 import server as srv
+import apps_store as appstore
 
 try:
     import tray_win
@@ -113,6 +114,7 @@ class App:
         self.ips = srv.get_lan_ips()
 
         srv.PIN_FILE = os.path.join(data_dir(), "pin.txt")
+        appstore.APPS_FILE = os.path.join(data_dir(), "apps.json")
         self.pin = srv.load_or_create_pin(None)
 
         self._tray_hint = os.path.join(data_dir(), "tray_hint_shown")
@@ -221,8 +223,16 @@ class App:
                        activeforeground=FG, font=("Segoe UI", 10),
                        borderwidth=0, highlightthickness=0).pack(pady=(14, 0))
 
+        tk.Button(r, text="Manage apps…", command=self._manage_apps,
+                  bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
+                  relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
+                  cursor="hand2", borderwidth=0).pack(pady=(12, 0))
+
         tk.Label(r, text="Keep this open to use your phone as a mouse/keyboard.",
                  bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="bottom", pady=10)
+
+    def _manage_apps(self):
+        AppsManager(self.root)
 
     def _set_status(self, text, color):
         self.status.configure(text="●  " + text, fg=color)
@@ -300,6 +310,199 @@ class App:
         except Exception:
             pass
         self.root.destroy()
+
+
+# Named colors offered in the app editor -> RRGGBB.
+APP_COLORS = {
+    "Red": "FF0000", "Pink": "E50914", "Green": "1DB954", "Mint": "1CE783",
+    "Sky": "00A8E1", "Cyan": "17B2E7", "Blue": "0046FF", "Navy": "113CCF",
+    "Purple": "9146FF", "Orange": "FF8800", "Grey": "8A94A6",
+}
+
+
+def _flat_button(parent, text, cmd, primary=False):
+    return tk.Button(
+        parent, text=text, command=cmd,
+        bg=(ACCENT if primary else CARD), fg="white" if primary else FG,
+        activebackground=("#3F73D6" if primary else "#1F2733"),
+        activeforeground="white" if primary else FG, relief="flat",
+        font=("Segoe UI", 10, "bold") if primary else ("Segoe UI", 10),
+        padx=12, pady=5, cursor="hand2", borderwidth=0)
+
+
+def _dark_option(parent, var, values):
+    om = tk.OptionMenu(parent, var, *values)
+    om.config(bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
+              relief="flat", highlightthickness=0, borderwidth=0,
+              font=("Segoe UI", 10))
+    try:
+        om["menu"].config(bg=CARD, fg=FG, activebackground=ACCENT,
+                          activeforeground="white", borderwidth=0)
+    except Exception:
+        pass
+    return om
+
+
+class AppsManager:
+    """Window to add/edit/remove/reorder the phone's quick-launch apps."""
+
+    def __init__(self, parent):
+        self.apps = appstore.load_apps()
+        self.win = tk.Toplevel(parent)
+        self.win.title("Manage apps")
+        self.win.configure(bg=BG)
+        self.win.geometry("470x470")
+        self.win.transient(parent)
+        try:
+            self.win.grab_set()
+        except Exception:
+            pass
+
+        tk.Label(self.win, text="Quick-launch apps", bg=BG, fg=FG,
+                 font=("Segoe UI Semibold", 14)).pack(anchor="w", padx=16, pady=(14, 0))
+        tk.Label(self.win,
+                 text="These show on your phone's Apps screen. A target can be a "
+                      "website, a spotify:/steam: link, or an app like vlc.exe.",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 9), wraplength=430,
+                 justify="left").pack(anchor="w", padx=16, pady=(2, 10))
+
+        body = tk.Frame(self.win, bg=BG)
+        body.pack(fill="both", expand=True, padx=16)
+        self.listbox = tk.Listbox(body, bg=CARD, fg=FG, selectbackground=ACCENT,
+                                  selectforeground="white", borderwidth=0,
+                                  highlightthickness=0, activestyle="none",
+                                  font=("Segoe UI", 11))
+        self.listbox.pack(side="left", fill="both", expand=True)
+        self.listbox.bind("<Double-Button-1>", lambda e: self._edit())
+        sb = tk.Scrollbar(body, command=self.listbox.yview)
+        sb.pack(side="right", fill="y")
+        self.listbox.config(yscrollcommand=sb.set)
+
+        btns = tk.Frame(self.win, bg=BG)
+        btns.pack(fill="x", padx=16, pady=12)
+        for text, cmd in (("Add", self._add), ("Edit", self._edit),
+                          ("Remove", self._remove),
+                          ("Up", lambda: self._move(-1)),
+                          ("Down", lambda: self._move(1))):
+            _flat_button(btns, text, cmd).pack(side="left", padx=(0, 6))
+        _flat_button(btns, "Close", self.win.destroy, primary=True).pack(side="right")
+
+        self._refresh()
+
+    def _refresh(self, select=None):
+        self.listbox.delete(0, tk.END)
+        for a in self.apps:
+            self.listbox.insert(tk.END, f"  {a['name']}   —   {a['target']}")
+        if select is not None and 0 <= select < len(self.apps):
+            self.listbox.selection_clear(0, tk.END)
+            self.listbox.selection_set(select)
+            self.listbox.activate(select)
+
+    def _selected(self):
+        sel = self.listbox.curselection()
+        return sel[0] if sel else None
+
+    def _save(self, select=None):
+        self.apps = appstore.save_apps(self.apps)
+        self._refresh(select)
+
+    def _add(self):
+        AppEditor(self.win, None, self._on_add)
+
+    def _on_add(self, entry):
+        self.apps.append(entry)
+        self._save(len(self.apps) - 1)
+
+    def _edit(self):
+        i = self._selected()
+        if i is None:
+            return
+        AppEditor(self.win, dict(self.apps[i]), lambda e: self._on_edit(i, e))
+
+    def _on_edit(self, i, entry):
+        self.apps[i] = entry
+        self._save(i)
+
+    def _remove(self):
+        i = self._selected()
+        if i is None:
+            return
+        del self.apps[i]
+        self._save(min(i, len(self.apps) - 1) if self.apps else None)
+
+    def _move(self, delta):
+        i = self._selected()
+        if i is None:
+            return
+        j = i + delta
+        if 0 <= j < len(self.apps):
+            self.apps[i], self.apps[j] = self.apps[j], self.apps[i]
+            self._save(j)
+
+
+class AppEditor:
+    """Modal add/edit dialog for a single app entry."""
+
+    def __init__(self, parent, entry, on_save):
+        self.on_save = on_save
+        self.win = tk.Toplevel(parent)
+        self.win.title("Edit app" if entry else "Add app")
+        self.win.configure(bg=BG)
+        self.win.geometry("370x310")
+        self.win.transient(parent)
+        try:
+            self.win.grab_set()
+        except Exception:
+            pass
+
+        entry = entry or {"name": "", "target": "", "icon": "app", "color": "4F8CFF"}
+
+        def field(label, value):
+            tk.Label(self.win, text=label, bg=BG, fg=MUTED,
+                     font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(10, 0))
+            e = tk.Entry(self.win, bg=CARD, fg=FG, insertbackground=FG,
+                         relief="flat", font=("Segoe UI", 11))
+            e.insert(0, value)
+            e.pack(fill="x", padx=16, ipady=4)
+            return e
+
+        self.name = field("Name", entry["name"])
+        self.target = field("Target (URL, protocol, or app.exe)", entry["target"])
+
+        row = tk.Frame(self.win, bg=BG)
+        row.pack(fill="x", padx=16, pady=(10, 0))
+        tk.Label(row, text="Icon", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        tk.Label(row, text="Color", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 9)).grid(row=0, column=1, sticky="w", padx=(12, 0))
+        self.icon_var = tk.StringVar(
+            value=entry["icon"] if entry["icon"] in appstore.ICON_KEYWORDS else "app")
+        _dark_option(row, self.icon_var, appstore.ICON_KEYWORDS).grid(
+            row=1, column=0, sticky="ew")
+        cur = next((n for n, h in APP_COLORS.items()
+                    if h == str(entry["color"]).upper()), "Blue")
+        self.color_var = tk.StringVar(value=cur)
+        _dark_option(row, self.color_var, list(APP_COLORS.keys())).grid(
+            row=1, column=1, sticky="ew", padx=(12, 0))
+        row.columnconfigure(0, weight=1)
+        row.columnconfigure(1, weight=1)
+
+        actions = tk.Frame(self.win, bg=BG)
+        actions.pack(fill="x", padx=16, pady=16, side="bottom")
+        _flat_button(actions, "Cancel", self.win.destroy).pack(side="right", padx=(6, 0))
+        _flat_button(actions, "Save", self._save, primary=True).pack(side="right")
+        self.name.focus_set()
+
+    def _save(self):
+        name = self.name.get().strip()
+        target = self.target.get().strip()
+        if name and target:
+            self.on_save({
+                "name": name, "target": target,
+                "icon": self.icon_var.get(),
+                "color": APP_COLORS.get(self.color_var.get(), "4F8CFF"),
+            })
+        self.win.destroy()
 
 
 def main():
