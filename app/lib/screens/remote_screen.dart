@@ -128,6 +128,62 @@ class _RemoteScreenState extends State<RemoteScreen> {
     client.power(action);
   }
 
+  /// The strip of feature controls under the app bar (only shown while
+  /// connected). Media/Keyboard toggle their bottom panels; Present opens the
+  /// presenter screen; Power opens the power menu.
+  Widget _featureBar(RemoteClient client) {
+    return Material(
+      color: const Color(0xFF161C24),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        child: Row(children: [
+          Expanded(
+            child: _FeatureCell(
+              icon: Icons.play_circle_outline,
+              label: 'Media',
+              active: _media,
+              onTap: () => setState(() => _media = !_media),
+            ),
+          ),
+          Expanded(
+            child: _FeatureCell(
+              icon: _keyboard ? Icons.keyboard_hide : Icons.keyboard,
+              label: 'Keyboard',
+              active: _keyboard,
+              onTap: () => setState(() => _keyboard = !_keyboard),
+            ),
+          ),
+          Expanded(
+            child: _FeatureCell(
+              icon: Icons.slideshow,
+              label: 'Present',
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => PresentationScreen(client: client))),
+            ),
+          ),
+          Expanded(
+            child: PopupMenuButton<String>(
+              tooltip: 'Power',
+              onSelected: (v) => _onPower(client, v),
+              itemBuilder: (_) => [
+                _powerItem('lock', Icons.lock_outline, 'Lock'),
+                _powerItem('sleep', Icons.bedtime_outlined, 'Sleep'),
+                const PopupMenuDivider(),
+                _powerItem('logoff', Icons.logout, 'Log off'),
+                _powerItem('restart', Icons.restart_alt, 'Restart'),
+                _powerItem('shutdown', Icons.power_settings_new, 'Shut down'),
+              ],
+              child: const _FeatureCell(
+                icon: Icons.power_settings_new,
+                label: 'Power',
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
@@ -156,39 +212,6 @@ class _RemoteScreenState extends State<RemoteScreen> {
             ]),
             actions: [
               IconButton(
-                tooltip: 'Media & volume',
-                isSelected: _media,
-                icon: const Icon(Icons.play_circle_outline),
-                onPressed: () => setState(() => _media = !_media),
-              ),
-              IconButton(
-                tooltip: 'Keyboard',
-                icon: Icon(_keyboard ? Icons.keyboard_hide : Icons.keyboard),
-                onPressed: () => setState(() => _keyboard = !_keyboard),
-              ),
-              IconButton(
-                tooltip: 'Presentation',
-                icon: const Icon(Icons.slideshow),
-                onPressed: client.isConnected
-                    ? () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => PresentationScreen(client: client)))
-                    : null,
-              ),
-              PopupMenuButton<String>(
-                tooltip: 'Power',
-                icon: const Icon(Icons.power_settings_new),
-                enabled: client.isConnected,
-                onSelected: (v) => _onPower(client, v),
-                itemBuilder: (_) => [
-                  _powerItem('lock', Icons.lock_outline, 'Lock'),
-                  _powerItem('sleep', Icons.bedtime_outlined, 'Sleep'),
-                  const PopupMenuDivider(),
-                  _powerItem('logoff', Icons.logout, 'Log off'),
-                  _powerItem('restart', Icons.restart_alt, 'Restart'),
-                  _powerItem('shutdown', Icons.power_settings_new, 'Shut down'),
-                ],
-              ),
-              IconButton(
                 tooltip: 'Settings',
                 icon: const Icon(Icons.settings_outlined),
                 onPressed: () => Navigator.of(context).push(MaterialPageRoute(
@@ -206,6 +229,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
     switch (client.state) {
       case ConnState.connected:
         return Column(children: [
+          _featureBar(client),
           Expanded(
             child: Trackpad(client: client, settings: scope.settings),
           ),
@@ -266,6 +290,53 @@ class _StatusDot extends StatelessWidget {
       width: 11,
       height: 11,
       decoration: BoxDecoration(color: col, shape: BoxShape.circle),
+    );
+  }
+}
+
+/// One control in the feature bar under the app bar. Highlights when [active]
+/// (the Media/Keyboard toggles). Pass a null [onTap] when a parent handles the
+/// tap (e.g. the Power PopupMenuButton).
+class _FeatureCell extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback? onTap;
+  const _FeatureCell({
+    required this.icon,
+    required this.label,
+    this.active = false,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = Color(0xFF4F8CFF);
+    final fg = active ? accent : Colors.white70;
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: fg, size: 24),
+          const SizedBox(height: 3),
+          Text(label,
+              style: TextStyle(
+                color: fg,
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+              )),
+        ],
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.all(4),
+      child: Material(
+        color: active ? const Color(0x334F8CFF) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: onTap == null ? content : InkWell(onTap: onTap, child: content),
+      ),
     );
   }
 }
