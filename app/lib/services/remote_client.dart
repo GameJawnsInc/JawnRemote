@@ -167,6 +167,7 @@ class RemoteClient extends ChangeNotifier {
   void text(String s) => _sendRaw({'t': 'text', 's': s});
   void key(String k, [List<String> mods = const []]) =>
       _sendRaw({'t': 'key', 'k': k, 'm': mods});
+  void power(String action) => _sendRaw({'t': 'power', 'action': action});
   void ping() => _sendRaw({'t': 'ping'});
 
   @override

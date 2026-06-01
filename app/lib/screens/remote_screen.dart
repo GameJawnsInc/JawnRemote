@@ -17,7 +17,7 @@ class RemoteScreen extends StatefulWidget {
 
 class _RemoteScreenState extends State<RemoteScreen> {
   bool _keyboard = false;
-  bool _volume = false;
+  bool _media = false;
   bool _saved = false;
   bool _started = false;
   bool _intercepting = false;
@@ -88,6 +88,45 @@ class _RemoteScreenState extends State<RemoteScreen> {
     }
   }
 
+  PopupMenuItem<String> _powerItem(String value, IconData icon, String label) =>
+      PopupMenuItem<String>(
+        value: value,
+        child: Row(children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 12),
+          Text(label),
+        ]),
+      );
+
+  Future<void> _onPower(RemoteClient client, String action) async {
+    const labels = {
+      'logoff': 'Log off',
+      'restart': 'Restart',
+      'shutdown': 'Shut down',
+    };
+    // Confirm the destructive ones; lock/sleep fire immediately.
+    if (labels.containsKey(action)) {
+      final who = client.serverName.isNotEmpty ? client.serverName : 'the PC';
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('${labels[action]} $who?'),
+          content: Text('This will ${labels[action]!.toLowerCase()} $who now.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(labels[action]!)),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    client.power(action);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
@@ -116,15 +155,29 @@ class _RemoteScreenState extends State<RemoteScreen> {
             ]),
             actions: [
               IconButton(
-                tooltip: 'Volume',
-                isSelected: _volume,
-                icon: const Icon(Icons.volume_up),
-                onPressed: () => setState(() => _volume = !_volume),
+                tooltip: 'Media & volume',
+                isSelected: _media,
+                icon: const Icon(Icons.play_circle_outline),
+                onPressed: () => setState(() => _media = !_media),
               ),
               IconButton(
                 tooltip: 'Keyboard',
                 icon: Icon(_keyboard ? Icons.keyboard_hide : Icons.keyboard),
                 onPressed: () => setState(() => _keyboard = !_keyboard),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Power',
+                icon: const Icon(Icons.power_settings_new),
+                enabled: client.isConnected,
+                onSelected: (v) => _onPower(client, v),
+                itemBuilder: (_) => [
+                  _powerItem('lock', Icons.lock_outline, 'Lock'),
+                  _powerItem('sleep', Icons.bedtime_outlined, 'Sleep'),
+                  const PopupMenuDivider(),
+                  _powerItem('logoff', Icons.logout, 'Log off'),
+                  _powerItem('restart', Icons.restart_alt, 'Restart'),
+                  _powerItem('shutdown', Icons.power_settings_new, 'Shut down'),
+                ],
               ),
               IconButton(
                 tooltip: 'Settings',
@@ -147,7 +200,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
           Expanded(
             child: Trackpad(client: client, settings: scope.settings),
           ),
-          if (_volume) _VolumeBar(client: client),
+          if (_media) _MediaBar(client: client),
           _MouseButtons(client: client),
           if (_keyboard) KeyboardBar(client: client),
         ]);
@@ -239,45 +292,69 @@ class _MouseButtons extends StatelessWidget {
   }
 }
 
-/// System-volume controls. Sends the media volume keys to the PC (the server
-/// maps these to VK_VOLUME_*). Up/down repeat while held.
-class _VolumeBar extends StatelessWidget {
+/// Media transport + system-volume controls. Everything is sent as a named key
+/// the server maps to the VK_MEDIA_* / VK_VOLUME_* virtual keys. Volume up/down
+/// repeat while held.
+class _MediaBar extends StatelessWidget {
   final RemoteClient client;
-  const _VolumeBar({required this.client});
+  const _MediaBar({required this.client});
+
+  Widget _tap(IconData icon, String key) => Expanded(
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: SizedBox(
+            height: 52,
+            child: FilledButton.tonal(
+              onPressed: () => client.key(key),
+              child: Icon(icon, size: 24),
+            ),
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: const Color(0xFF0E1116),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      child: Row(children: [
-        Expanded(
-          flex: 3,
-          child: _HoldRepeatButton(
-            icon: Icons.volume_down,
-            onFire: () => client.key('volumedown'),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // Transport
+        Row(children: [
+          _tap(Icons.skip_previous, 'mediaprev'),
+          _tap(Icons.play_arrow, 'playpause'),
+          _tap(Icons.skip_next, 'medianext'),
+          _tap(Icons.stop, 'mediastop'),
+        ]),
+        // Volume
+        Row(children: [
+          Expanded(
+            flex: 3,
+            child: _HoldRepeatButton(
+              icon: Icons.volume_down,
+              onFire: () => client.key('volumedown'),
+            ),
           ),
-        ),
-        Expanded(
-          flex: 2,
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: SizedBox(
-              height: 54,
-              child: FilledButton.tonal(
-                onPressed: () => client.key('volumemute'),
-                child: const Icon(Icons.volume_off, size: 24),
+          Expanded(
+            flex: 2,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: SizedBox(
+                height: 52,
+                child: FilledButton.tonal(
+                  onPressed: () => client.key('volumemute'),
+                  child: const Icon(Icons.volume_off, size: 24),
+                ),
               ),
             ),
           ),
-        ),
-        Expanded(
-          flex: 3,
-          child: _HoldRepeatButton(
-            icon: Icons.volume_up,
-            onFire: () => client.key('volumeup'),
+          Expanded(
+            flex: 3,
+            child: _HoldRepeatButton(
+              icon: Icons.volume_up,
+              onFire: () => client.key('volumeup'),
+            ),
           ),
-        ),
+        ]),
       ]),
     );
   }
