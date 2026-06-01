@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_scope.dart';
 import '../models/host.dart';
 import '../services/remote_client.dart';
+import '../services/hardware_volume.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
 import 'settings_screen.dart';
@@ -19,7 +20,9 @@ class _RemoteScreenState extends State<RemoteScreen> {
   bool _volume = false;
   bool _saved = false;
   bool _started = false;
+  bool _intercepting = false;
   RemoteClient? _client;
+  final HardwareVolume _hwVolume = HardwareVolume();
 
   @override
   void didChangeDependencies() {
@@ -30,6 +33,9 @@ class _RemoteScreenState extends State<RemoteScreen> {
   @override
   void initState() {
     super.initState();
+    // Hardware volume rocker -> PC volume (forwarded only while connected).
+    _hwVolume.onVolume =
+        (dir) => _client?.key(dir == 'up' ? 'volumeup' : 'volumedown');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_started || !mounted) return;
       _started = true;
@@ -41,6 +47,8 @@ class _RemoteScreenState extends State<RemoteScreen> {
 
   @override
   void dispose() {
+    _hwVolume.setIntercept(false); // restore normal volume-button behavior
+    _hwVolume.onVolume = null;
     _client?.disconnect();
     super.dispose();
   }
@@ -88,6 +96,10 @@ class _RemoteScreenState extends State<RemoteScreen> {
       listenable: client,
       builder: (context, _) {
         if (client.isConnected) _saveHostOnce(client);
+        if (client.isConnected != _intercepting) {
+          _intercepting = client.isConnected;
+          _hwVolume.setIntercept(_intercepting); // capture rocker only while connected
+        }
         return Scaffold(
           appBar: AppBar(
             title: Row(children: [
