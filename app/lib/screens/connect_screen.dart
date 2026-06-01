@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../app_scope.dart';
+import '../config.dart';
 import '../models/host.dart';
 import '../services/discovery.dart';
 import 'remote_screen.dart';
@@ -121,8 +122,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
             icon: const Icon(Icons.add),
             label: const Text('Add PC'),
           ),
-          bottomNavigationBar:
-              scope.billing.isPro ? null : const BannerAdBar(),
+          bottomNavigationBar: (!kAdsEnabled || scope.billing.isPro)
+              ? null
+              : const BannerAdBar(),
           body: ListView(
             padding: const EdgeInsets.only(bottom: 88),
             children: [
