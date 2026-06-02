@@ -365,6 +365,49 @@
       </details>
     </section>
 
+    <section class="block">
+      <h2>Troubleshooting</h2>
+      <details class="quickstart">
+        <summary>App can't find or reach the PC</summary>
+        <div class="body">
+          <h3>Using a VPN?</h3>
+          <p>This is the most common cause. A VPN on your <b>phone</b> (or PC)
+          pulls <em>all</em> network traffic into its encrypted tunnel — including
+          the local connection to your PC — so the app's packets get routed off to
+          the VPN server instead of across the room, and it times out.</p>
+          <p>Fix it in your VPN app's settings — either of these works:</p>
+          <ul>
+            <li>Turn on <b>Local network sharing</b> — sometimes labeled
+            "Allow local network access," "LAN access," or "Allow access to local
+            devices." Local traffic then skips the tunnel while everything else
+            stays protected.</li>
+            <li>Or use <b>split tunneling</b> to exclude JawnRemote from the VPN.</li>
+          </ul>
+          <div class="callout">
+            Most VPNs have one of these (Mullvad, NordVPN, Proton, ExpressVPN…).
+            After changing it, reconnect in the app.
+          </div>
+
+          <h3>On the same network?</h3>
+          <p>The phone and PC must be on the <b>same Wi-Fi</b>. Watch out for
+          <b>Guest</b> networks and "client isolation" / "AP isolation" router
+          settings — these block device-to-device traffic even on the same Wi-Fi.
+          Put both on your normal network.</p>
+
+          <h3>Still nothing?</h3>
+          <ul>
+            <li>Tap <b>Add PC</b> and type the <b>IP</b> shown in the server
+            window — auto-discovery is the first thing a VPN or strict router
+            blocks, but a direct connection to the IP still works.</li>
+            <li>Make sure the <b>server window is still open</b> on the PC.</li>
+            <li>The installer opens the firewall for you, but third-party security
+            software can re-block it — allow <code>JawnRemoteServer.exe</code> on
+            private networks if prompted.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
     <section class="block gestures">
       <h2>Gestures</h2>
       <table>
