@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/host.dart';
+import '../models/macro.dart';
 
 /// App settings + saved hosts, persisted with shared_preferences.
 class Settings extends ChangeNotifier {
@@ -14,6 +15,7 @@ class Settings extends ChangeNotifier {
   bool keepScreenOn = true;
   String deviceName = 'Phone';
   List<RemoteHost> hosts = [];
+  List<Macro> macros = [];
 
   Future<void> load() async {
     _p = await SharedPreferences.getInstance();
@@ -33,6 +35,10 @@ class Settings extends ChangeNotifier {
           }
         })
         .whereType<RemoteHost>()
+        .toList();
+    macros = (_p.getStringList('macros') ?? [])
+        .map(Macro.decode)
+        .whereType<Macro>()
         .toList();
     notifyListeners();
   }
@@ -89,5 +95,12 @@ class Settings extends ChangeNotifier {
   Future<void> removeHost(RemoteHost h) async {
     hosts.removeWhere((e) => e.key == h.key);
     await _saveHosts();
+  }
+
+  /// Replace the whole macro list (the editor manages add/edit/remove).
+  Future<void> saveMacros(List<Macro> list) async {
+    macros = list;
+    await _p.setStringList('macros', macros.map((m) => m.encode()).toList());
+    notifyListeners();
   }
 }

@@ -8,6 +8,7 @@ import '../services/wol.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
 import 'apps_screen.dart';
+import 'macros_screen.dart';
 import 'presentation_screen.dart';
 import 'settings_screen.dart';
 
@@ -174,6 +175,14 @@ class _RemoteScreenState extends State<RemoteScreen> {
               label: 'Apps',
               onTap: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => AppsScreen(client: client))),
+            ),
+          ),
+          Expanded(
+            child: _FeatureCell(
+              icon: Icons.bolt,
+              label: 'Macros',
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => MacrosScreen(client: client))),
             ),
           ),
           Expanded(
