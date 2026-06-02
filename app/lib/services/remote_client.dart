@@ -1,13 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 enum ConnState { disconnected, connecting, connected, authFailed, error }
 
 /// TCP client speaking the newline-delimited JSON protocol to the PC server.
-/// Auto-reconnects with backoff while [_wantConnected] is true.
-class RemoteClient extends ChangeNotifier {
+///
+/// Reliability ("rock-solid reconnect"): while [_wantConnected] is true it
+/// auto-reconnects with a fast backoff; a ping/pong heartbeat detects silently
+/// dropped ("half-open") links that never send a FIN; a handshake watchdog
+/// covers a server that accepts the socket but never replies; and it reconnects
+/// the moment the app returns to the foreground (where the OS often kills idle
+/// sockets out from under us).
+class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   Socket? _sock;
   ConnState state = ConnState.disconnected;
   String serverName = '';
@@ -24,30 +30,54 @@ class RemoteClient extends ChangeNotifier {
   String deviceName = 'Phone';
 
   bool _wantConnected = false;
+  bool _everConnected = false;
   int _retry = 0;
   Timer? _reconnectTimer;
+  Timer? _heartbeatTimer;
+  Timer? _probeTimer; // handshake watchdog / app-resume probe
+  DateTime _lastInbound = DateTime.fromMillisecondsSinceEpoch(0);
   final StringBuffer _buf = StringBuffer();
 
+  // Reconnect backoff (ms) by attempt — the first retry is near-instant.
+  static const List<int> _backoffMs = [200, 500, 1000, 2000, 3000, 5000];
+  // Heartbeat: ping this often; declare the link dead after this much silence.
+  static const Duration _pingEvery = Duration(seconds: 4);
+  static const Duration _deadAfter = Duration(seconds: 9);
+
+  RemoteClient() {
+    WidgetsBinding.instance.addObserver(this);
+  }
+
   bool get isConnected => state == ConnState.connected;
+
+  /// True while re-establishing a link that was previously live — lets the UI
+  /// show a "Reconnecting…" hint over the controls instead of the first-time
+  /// connecting screen.
+  bool get isReconnecting =>
+      _everConnected && state == ConnState.connecting && _wantConnected;
 
   Future<void> connect(String host, int port, String pin) async {
     _host = host;
     _port = port;
     _pin = pin;
     _wantConnected = true;
+    _everConnected = false;
     _retry = 0;
     await _open();
   }
 
   void disconnect() {
     _wantConnected = false;
+    _everConnected = false;
     _reconnectTimer?.cancel();
+    _stopTimers();
     _cleanupSocket();
     _setState(ConnState.disconnected);
   }
 
   Future<void> _open() async {
     _reconnectTimer?.cancel();
+    _stopTimers();
     _cleanupSocket();
     _setState(ConnState.connecting);
     try {
@@ -56,8 +86,14 @@ class RemoteClient extends ChangeNotifier {
       s.setOption(SocketOption.tcpNoDelay, true);
       _sock = s;
       _buf.clear();
+      _lastInbound = DateTime.now();
       s.listen(_onData, onError: _onError, onDone: _onDone, cancelOnError: true);
       _sendRaw({'t': 'hello', 'pin': _pin, 'name': deviceName});
+      // Handshake watchdog: if no "welcome" arrives, drop and retry.
+      _probeTimer?.cancel();
+      _probeTimer = Timer(const Duration(seconds: 7), () {
+        if (state == ConnState.connecting) _onDead();
+      });
     } catch (e) {
       lastError = _friendly(e);
       _cleanupSocket();
@@ -70,6 +106,7 @@ class RemoteClient extends ChangeNotifier {
   }
 
   void _onData(List<int> data) {
+    _lastInbound = DateTime.now(); // any byte proves the link is alive
     _buf.write(utf8.decode(data, allowMalformed: true));
     while (true) {
       final s = _buf.toString();
@@ -93,7 +130,10 @@ class RemoteClient extends ChangeNotifier {
           serverName = (msg['server'] ?? _host).toString();
           serverMac = (msg['mac'] ?? '').toString();
           _retry = 0;
+          _everConnected = true;
+          _probeTimer?.cancel(); // handshake succeeded
           _setState(ConnState.connected);
+          _startHeartbeat();
         } else {
           _wantConnected = false;
           _setState(ConnState.authFailed);
@@ -110,8 +150,41 @@ class RemoteClient extends ChangeNotifier {
     }
   }
 
+  // ---- heartbeat ----
+  void _startHeartbeat() {
+    _lastInbound = DateTime.now();
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(_pingEvery, (_) {
+      if (state != ConnState.connected) return;
+      if (DateTime.now().difference(_lastInbound) > _deadAfter) {
+        _onDead();
+      } else {
+        ping();
+      }
+    });
+  }
+
+  void _stopTimers() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _probeTimer?.cancel();
+    _probeTimer = null;
+  }
+
+  /// The link went silent (half-open, or never completed the handshake). Drop
+  /// it and reconnect on the fastest backoff step.
+  void _onDead() {
+    if (!_wantConnected) return;
+    lastError = 'Connection lost — reconnecting…';
+    _stopTimers();
+    _cleanupSocket();
+    _retry = 0;
+    _scheduleReconnect();
+  }
+
   void _onError(Object e) {
     lastError = _friendly(e);
+    _stopTimers();
     _cleanupSocket();
     if (_wantConnected && state != ConnState.authFailed) {
       _scheduleReconnect();
@@ -121,6 +194,7 @@ class RemoteClient extends ChangeNotifier {
   }
 
   void _onDone() {
+    _stopTimers();
     _cleanupSocket();
     if (_wantConnected && state != ConnState.authFailed) {
       _scheduleReconnect();
@@ -130,13 +204,38 @@ class RemoteClient extends ChangeNotifier {
   }
 
   void _scheduleReconnect() {
+    _stopTimers();
+    if (_reconnectTimer?.isActive ?? false) return; // already pending
     _setState(ConnState.connecting);
-    _retry = (_retry + 1).clamp(1, 6);
-    _reconnectTimer?.cancel();
-    _reconnectTimer =
-        Timer(Duration(milliseconds: 400 * _retry), () {
+    final delay = _backoffMs[_retry.clamp(0, _backoffMs.length - 1)];
+    _retry = (_retry + 1).clamp(0, _backoffMs.length - 1);
+    _reconnectTimer = Timer(Duration(milliseconds: delay), () {
       if (_wantConnected) _open();
     });
+  }
+
+  // ---- app lifecycle: reconnect fast when returning to the foreground ----
+  @override
+  // ignore: avoid_renaming_method_parameters  (would shadow our `state` field)
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    if (s != AppLifecycleState.resumed || !_wantConnected) return;
+    if (state == ConnState.connected) {
+      // The socket may have died while we were backgrounded. Ping now; if
+      // nothing comes back shortly, treat it as dead and reconnect.
+      final pingedAt = DateTime.now();
+      ping();
+      _probeTimer?.cancel();
+      _probeTimer = Timer(const Duration(seconds: 3), () {
+        if (state == ConnState.connected && _lastInbound.isBefore(pingedAt)) {
+          _onDead();
+        }
+      });
+    } else {
+      // Mid-reconnect or dropped — retry now instead of waiting out the backoff.
+      _retry = 0;
+      _reconnectTimer?.cancel();
+      _open();
+    }
   }
 
   void _cleanupSocket() {
@@ -163,7 +262,9 @@ class RemoteClient extends ChangeNotifier {
 
   String _friendly(Object e) {
     final s = e.toString();
-    if (s.contains('refused')) return 'Connection refused — is the server running?';
+    if (s.contains('refused')) {
+      return 'Connection refused — is the server running?';
+    }
     if (s.contains('timed out') || s.contains('timeout')) {
       return 'Timed out — check the IP and that the firewall allows port $_port.';
     }
@@ -187,6 +288,7 @@ class RemoteClient extends ChangeNotifier {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     disconnect();
     super.dispose();
   }
