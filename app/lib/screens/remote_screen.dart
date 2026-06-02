@@ -280,13 +280,14 @@ class _RemoteScreenState extends State<RemoteScreen> {
   Widget _body(RemoteClient client, AppScope scope) {
     switch (client.state) {
       case ConnState.connected:
-        return Column(children: [
-          _featureBar(client),
-          Expanded(
-            child: Trackpad(client: client, settings: scope.settings),
-          ),
-          _bottomPanels(client),
-        ]);
+        return _connectedView(client, scope, reconnecting: false);
+      case ConnState.connecting:
+        // A drop after we'd connected keeps the controls up with a banner; a
+        // first-time connect shows the full connecting screen.
+        if (client.isReconnecting) {
+          return _connectedView(client, scope, reconnecting: true);
+        }
+        return _connectingMessage();
       case ConnState.authFailed:
         return _Message(
           icon: Icons.lock_outline,
@@ -308,14 +309,57 @@ class _RemoteScreenState extends State<RemoteScreen> {
           onSecondary:
               widget.host.mac.isNotEmpty ? () => _wake(widget.host) : null,
         );
-      default:
-        return _Message(
-          icon: Icons.wifi_tethering,
-          title: 'Connecting…',
-          detail: '${widget.host.ip}:${widget.host.port}',
-          showSpinner: true,
-        );
+      case ConnState.disconnected:
+        return _connectingMessage();
     }
+  }
+
+  Widget _connectingMessage() => _Message(
+        icon: Icons.wifi_tethering,
+        title: 'Connecting…',
+        detail: '${widget.host.ip}:${widget.host.port}',
+        showSpinner: true,
+      );
+
+  Widget _connectedView(RemoteClient client, AppScope scope,
+      {required bool reconnecting}) {
+    return Column(children: [
+      _featureBar(client),
+      if (reconnecting) const _ReconnectBanner(),
+      Expanded(
+        child: Trackpad(client: client, settings: scope.settings),
+      ),
+      _bottomPanels(client),
+    ]);
+  }
+}
+
+class _ReconnectBanner extends StatelessWidget {
+  const _ReconnectBanner();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFF3A2E12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: Color(0xFFE8A33D)),
+          ),
+          SizedBox(width: 12),
+          Text('Reconnecting…',
+              style: TextStyle(
+                  color: Color(0xFFE8A33D),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
   }
 }
 
