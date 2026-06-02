@@ -95,17 +95,25 @@ class FileTransfer extends ChangeNotifier {
   // ===================== outgoing (phone -> PC) =====================
 
   Future<void> sendFile(String path, String name) async {
-    if (!client.isConnected) {
-      _txFail('Not connected.');
-      return;
-    }
     if (txState == TxState.sending) return; // one upload at a time
-    final file = File(path);
-    txTotal = await file.length();
-    txSent = 0;
     txName = name;
+    txTotal = 0;
+    txSent = 0;
     txError = '';
     txState = TxState.sending;
+    notifyListeners();
+    // Opening the system file picker backgrounds the app, which can briefly
+    // drop the socket. Give the auto-reconnect up to ~10 s to come back before
+    // giving up, so the first send after picking doesn't fail spuriously.
+    for (var i = 0; i < 50 && !client.isConnected; i++) {
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    if (!client.isConnected) {
+      _txFail('Not connected — try again.');
+      return;
+    }
+    final file = File(path);
+    txTotal = await file.length();
     _txId = _newId();
     _txAcked = 0;
     _txCanceled = false;
