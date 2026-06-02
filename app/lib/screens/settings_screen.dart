@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../app_scope.dart';
+import '../models/feature.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -76,6 +77,34 @@ class SettingsScreen extends StatelessWidget {
                 );
                 if (v != null) s.setDeviceName(v);
               },
+            ),
+            const Divider(height: 24),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 0),
+              child: Text('Toolbar buttons',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text(
+                'Show only what you use — hidden buttons disappear from the bar above the trackpad.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final f in kFeatures)
+                    FilterChip(
+                      label: Text(f.label),
+                      selected: s.isFeatureVisible(f.key),
+                      onSelected: (v) => s.setFeatureVisible(f.key, v),
+                    ),
+                ],
+              ),
             ),
             const Divider(height: 24),
             const Padding(
