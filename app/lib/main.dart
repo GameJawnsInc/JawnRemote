@@ -5,6 +5,7 @@ import 'services/settings.dart';
 import 'services/remote_client.dart';
 import 'services/discovery.dart';
 import 'services/billing.dart';
+import 'services/file_transfer.dart';
 import 'screens/connect_screen.dart';
 
 Future<void> main() async {
@@ -16,12 +17,14 @@ Future<void> main() async {
   final discovery = Discovery();
   final billing = BillingService();
   unawaited(billing.init());
+  final fileTransfer = FileTransfer(client);
 
   runApp(JawnRemoteApp(
     settings: settings,
     client: client,
     discovery: discovery,
     billing: billing,
+    fileTransfer: fileTransfer,
   ));
 }
 
@@ -30,12 +33,14 @@ class JawnRemoteApp extends StatelessWidget {
   final RemoteClient client;
   final Discovery discovery;
   final BillingService billing;
+  final FileTransfer fileTransfer;
   const JawnRemoteApp({
     super.key,
     required this.settings,
     required this.client,
     required this.discovery,
     required this.billing,
+    required this.fileTransfer,
   });
 
   @override
@@ -45,6 +50,7 @@ class JawnRemoteApp extends StatelessWidget {
       client: client,
       discovery: discovery,
       billing: billing,
+      fileTransfer: fileTransfer,
       child: MaterialApp(
         title: 'JawnRemote',
         debugShowCheckedModeBanner: false,

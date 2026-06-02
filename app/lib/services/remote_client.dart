@@ -27,6 +27,10 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   /// Last clipboard text received from the PC (clipboard sync).
   String pcClipboard = '';
 
+  /// Set by [FileTransfer]; receives the file-transfer frames (file*). Kept off
+  /// [notifyListeners] so a chunked transfer doesn't churn the whole UI tree.
+  void Function(Map<String, dynamic> msg)? onFileFrame;
+
   String _host = '';
   int _port = 8770;
   String _pin = '';
@@ -153,6 +157,14 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
       case 'clip':
         pcClipboard = (msg['s'] ?? '').toString();
         notifyListeners();
+        break;
+      case 'fileack':
+      case 'filedone':
+      case 'filebeg':
+      case 'filedat':
+      case 'fileend':
+      case 'fileabort':
+        onFileFrame?.call(msg);
         break;
     }
   }
@@ -294,6 +306,23 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void sendClipboard(String text) => _sendRaw({'t': 'clipset', 's': text});
   void requestClipboard() => _sendRaw({'t': 'clipget'});
   void ping() => _sendRaw({'t': 'ping'});
+
+  // ---- file transfer (chunked; driven by FileTransfer) ----
+  void fileBegin(String id, String name, int size) =>
+      _sendRaw({'t': 'filebeg', 'id': id, 'name': name, 'size': size});
+  void fileData(String id, int i, String b64) =>
+      _sendRaw({'t': 'filedat', 'id': id, 'i': i, 'b': b64});
+  void fileEnd(String id, String sha) =>
+      _sendRaw({'t': 'fileend', 'id': id, 'sha': sha});
+  void fileAbort(String id) => _sendRaw({'t': 'fileabort', 'id': id});
+  void fileAck(String id, int i) => _sendRaw({'t': 'fileack', 'id': id, 'i': i});
+  void fileDone(String id, bool ok, {String? path, String? err}) => _sendRaw({
+        't': 'filedone',
+        'id': id,
+        'ok': ok,
+        'path': ?path,
+        'err': ?err,
+      });
 
   @override
   void dispose() {

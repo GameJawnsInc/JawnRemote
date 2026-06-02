@@ -9,6 +9,7 @@ import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
 import 'apps_screen.dart';
 import 'clipboard_screen.dart';
+import 'files_screen.dart';
 import 'macros_screen.dart';
 import 'presentation_screen.dart';
 import 'settings_screen.dart';
@@ -206,6 +207,15 @@ class _RemoteScreenState extends State<RemoteScreen> {
             label: 'Clipboard',
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => ClipboardScreen(client: client))),
+          ),
+        ),
+      if (s.isFeatureVisible('files'))
+        Expanded(
+          child: _FeatureCell(
+            icon: Icons.folder_open,
+            label: 'Files',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => FilesScreen(client: client))),
           ),
         ),
       if (s.isFeatureVisible('power'))
