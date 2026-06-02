@@ -1,7 +1,36 @@
 # Roadmap — Publishing JawnRemote on the Google Play Store
 
-Current as of 2026. A free app with AdMob ads + one "Remove Ads" purchase.
-Verify the live numbers as you go (links at the bottom); Google changes these.
+Current as of 2026. A **free, ad-free** app (the AdMob + "Remove ads" IAP code
+ships **disabled** as of 1.5.1 — see *Data safety & privacy* below). Verify the
+live numbers as you go (links at the bottom); Google changes these.
+
+---
+
+## Data safety & privacy — current posture (LOCKED IN, app 1.5.1)
+
+**The app is ad-free with zero data collection.** Ads are disabled (no Google
+Mobile Ads init, no banner, no Advertising ID read), there's no analytics SDK,
+no account/sign-in, and every connection is phone↔PC on the local network —
+PIN-gated, with the server firewall scoped to `remoteip=localsubnet`. The only
+Android permission requested is `INTERNET` (for the LAN socket).
+
+**Play Console answers — fill these exactly:**
+- **Data safety → Data collected:** **None** ("Does your app collect or share any
+  of the required user data types?" → **No**).
+- **Data safety → Data shared:** **None.**
+- **Advertising ID:** **No** — the ads SDK is not initialized in this build.
+- **Content rating (IARC) → Contains ads:** **No.**
+- **Store presence → Contains ads:** **No.**
+- **Privacy policy:** `jawnston.com/jawnremote/privacy.html` (already linked).
+
+Keep these in sync with the privacy policy **and** the website's *Security &
+privacy* section — a data-safety ⇄ privacy-policy mismatch is the #1 rejection
+cause, and "No data collected" is the easiest possible version to keep matching.
+
+> ⚠️ **This flips if you re-enable ads** (set `kAdsEnabled = true` / ship AdMob):
+> declare **Device or other IDs → Advertising ID**, mark **Contains ads = Yes**,
+> swap in **real AdMob unit IDs**, and re-link AdMob after launch. The dormant
+> `remove_ads` IAP + AdMob code remain in the build for exactly that path.
 
 ---
 
@@ -32,17 +61,18 @@ You pick this once at signup and it's hard to change later.
 - [ ] Ship an **Android App Bundle (.aab)** — monolithic APKs are not accepted for new apps. (You already build `JawnRemote-release.aab`.)
 - [ ] **Play App Signing**: upload with your **upload key**; Google holds the **app signing key** and signs what users download.
   - ⚠️ This is exactly why your **website APK (upload-key-signed) and the Play version (app-signing-key-signed) can't update over each other** — different signatures. Fine to keep both channels; just know users must pick one.
-- [ ] Swap **AdMob test IDs for your real ad unit IDs** (app ID in `AndroidManifest.xml` + banner unit). Shipping test IDs to production violates AdMob policy.
+- [ ] **Ad-free build: skip.** *Only if you re-enable ads:* swap **AdMob test IDs for real ad unit IDs** (app ID in `AndroidManifest.xml` + banner unit) — shipping test IDs to production violates AdMob policy.
 - [ ] Confirm **Play Billing Library 8+** (mandatory for new submissions since Aug 31, 2025; `in_app_purchase` should pull a compatible version — verify).
 
 ## Phase 2 — Store listing + compliance (the rejection magnets)
 - [ ] **Assets** (you already generated most): app **icon 512×512** PNG; **feature graphic 1024×500** (no transparency); **≥2 phone screenshots** (up to 8); **title** ≤30 chars; **short description** ≤80; **full description** ≤4000.
 - [ ] **Privacy policy URL** — required. You have `jawnston.com/jawnremote/privacy.html`. ✅
-- [ ] **Data safety form** — **declare "Device or other IDs" (Advertising ID)** because the AdMob SDK reads the AAID. **This must match your privacy policy** — the #1 rejection cause is a data-safety ⇄ privacy-policy mismatch.
-- [ ] **Content rating** — complete the **IARC questionnaire**; answer "contains ads" = yes. No rating = can't publish.
-- [ ] Mark **"Contains ads"** in the store presence.
+- [ ] **Data safety form** — declare **No data collected / No data shared** (ad-free build; exact answers in *Data safety & privacy* above). **This must match your privacy policy** — the #1 rejection cause is a data-safety ⇄ privacy-policy mismatch.
+- [ ] **Content rating** — complete the **IARC questionnaire**; answer **contains ads = No** (ad-free build). No rating = can't publish.
+- [ ] Store presence: leave **"Contains ads" = No** (ad-free build).
 
 ## Phase 3 — Monetization wiring
+> **Ad-free build: this whole phase is dormant.** Do it only when/if you re-enable ads. The `remove_ads` product and AdMob code stay in the app for that day.
 - [ ] Create the **in-app product**: Monetize → Products → In-app products → **one-time / managed product**, **Product ID `remove_ads`** (must match the app code; immutable once set).
 - [ ] After the app is **live**, **link your AdMob app to the Play listing** (AdMob → Apps → link; you can't link an unpublished app — wait 24–48 h after publishing).
 
@@ -52,7 +82,7 @@ You pick this once at signup and it's hard to change later.
 - [ ] **Internal testing** track first (instant, just you) to sanity-check the store build before any of the above.
 
 ## Top rejection reasons to pre-empt
-1. Data safety form doesn't match privacy policy (esp. **not declaring Advertising ID**).
+1. Data safety form doesn't match privacy policy (your build is **ad-free → declare "No data collected"**; don't declare an Advertising ID you no longer use).
 2. Missing/invalid privacy policy URL.
 3. No content rating.
 4. Unjustified/sensitive permissions (you only use INTERNET — clean).
@@ -60,7 +90,7 @@ You pick this once at signup and it's hard to change later.
 6. Wrong target API or uploading an APK instead of an AAB.
 
 ## Fast path summary
-Form **Jawnston LLC** → get **D-U-N-S** → **Organization** Play account ($25) → build **API 36 AAB** with real AdMob IDs → listing + **data safety (declare Ad ID)** + privacy URL + IARC rating → create `remove_ads` product → **internal test → production** (no closed-testing gauntlet as an org). Link AdMob once live.
+Form **Jawnston LLC** → get **D-U-N-S** → **Organization** Play account ($25) → build **API 36 AAB** (ad-free) → listing + **data safety ("No data collected")** + privacy URL + IARC rating (**contains ads = No**) → **internal test → production** (no closed-testing gauntlet as an org).
 
 ## Official references
 - Get started / $25 fee: https://support.google.com/googleplay/android-developer/answer/6112435
