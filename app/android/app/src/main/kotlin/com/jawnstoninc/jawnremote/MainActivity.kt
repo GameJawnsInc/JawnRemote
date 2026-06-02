@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.view.KeyEvent
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -94,6 +96,10 @@ class MainActivity : FlutterActivity() {
                         result.success(false)
                     }
                 }
+                "openFile" -> {
+                    val path = call.argument<String>("path")
+                    result.success(if (path != null) openFile(path) else false)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -163,6 +169,24 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun sanitize(n: String): String = n.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
+    /** Hand a received file to another app via a FileProvider content:// URI. */
+    private fun openFile(path: String): Boolean {
+        return try {
+            val f = File(path)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+            val ext = f.extension.lowercase()
+            val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+            val view = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(view)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (intercept) {

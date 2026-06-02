@@ -53,6 +53,11 @@ class _FilesScreenState extends State<FilesScreen> {
     _snack(ok ? 'Saved ${f.name}.' : 'Save canceled.');
   }
 
+  Future<void> _open(IncomingFile f) async {
+    final ok = await _ft!.openReceived(f);
+    if (!ok) _snack('No app can open ${f.name}.');
+  }
+
   @override
   Widget build(BuildContext context) {
     _ft ??= AppScope.of(context).fileTransfer;
@@ -128,7 +133,10 @@ class _FilesScreenState extends State<FilesScreen> {
                           letterSpacing: 1.0)),
                   const SizedBox(height: 8),
                   for (final f in ft.received)
-                    _ReceivedTile(file: f, onSave: () => _save(f)),
+                    _ReceivedTile(
+                        file: f,
+                        onOpen: () => _open(f),
+                        onSave: () => _save(f)),
                 ],
               ],
             );
@@ -263,14 +271,16 @@ class _TransferCard extends StatelessWidget {
 
 class _ReceivedTile extends StatelessWidget {
   final IncomingFile file;
+  final VoidCallback onOpen;
   final VoidCallback onSave;
-  const _ReceivedTile({required this.file, required this.onSave});
+  const _ReceivedTile(
+      {required this.file, required this.onOpen, required this.onSave});
 
   @override
   Widget build(BuildContext context) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+      padding: const EdgeInsets.fromLTRB(14, 8, 4, 8),
       decoration: BoxDecoration(
         color: const Color(0xFF161C24),
         borderRadius: BorderRadius.circular(12),
@@ -292,10 +302,17 @@ class _ReceivedTile extends StatelessWidget {
             ],
           ),
         ),
-        TextButton.icon(
+        IconButton(
+          onPressed: onOpen,
+          icon: const Icon(Icons.open_in_new, size: 20),
+          color: const Color(0xFF4F8CFF),
+          tooltip: 'Open',
+        ),
+        IconButton(
           onPressed: onSave,
-          icon: const Icon(Icons.save_alt, size: 18),
-          label: const Text('Save'),
+          icon: const Icon(Icons.save_alt, size: 20),
+          color: const Color(0xFF4F8CFF),
+          tooltip: 'Save',
         ),
       ]),
     );

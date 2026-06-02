@@ -20,6 +20,7 @@ from tkinter import filedialog
 
 import server as srv
 import apps_store as appstore
+import filexfer as fx
 
 try:
     import tray_win
@@ -242,6 +243,14 @@ class App:
                   relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
                   cursor="hand2", borderwidth=0).pack(side="left")
 
+        btn_row2 = tk.Frame(r, bg=BG)
+        btn_row2.pack(pady=(6, 0))
+        tk.Button(btn_row2, text="View received files…",
+                  command=self._open_received,
+                  bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
+                  relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
+                  cursor="hand2", borderwidth=0).pack()
+
         tk.Label(r, text="Keep this open to use your phone as a mouse/keyboard.",
                  bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
@@ -275,6 +284,14 @@ class App:
                 GREEN if ok else "#E8A33D"))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _open_received(self):
+        """Open the folder where files the phone sends us land (Explorer)."""
+        folder = fx.received_dir()
+        try:
+            os.startfile(folder)
+        except OSError:
+            self._set_status("Couldn't open the files folder", "#E8A33D")
 
     def _set_status(self, text, color):
         self.status.configure(text="●  " + text, fg=color)

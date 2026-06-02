@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider roots. Received files live in the app cache dir; we also expose
+     files-dir for completeness. Used by "Open" to share a content:// URI. -->
+<paths>
+    <cache-path name="cache" path="." />
+    <files-path name="files" path="." />
+</paths>
