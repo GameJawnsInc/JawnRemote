@@ -138,6 +138,13 @@
     }
     .feature .name { font-size: 0.95rem; color: var(--accent); letter-spacing: 0.05em; margin-bottom: 0.35rem; }
     .feature .desc { font-size: 0.9rem; }
+    .feature .desc code {
+      font-family: var(--mono); background: rgba(79, 140, 255, 0.1);
+      padding: 0.05em 0.35em; font-size: 0.9em; word-break: break-word;
+    }
+    .block .lead {
+      font-size: 0.92rem; color: var(--ink); max-width: 640px; margin-bottom: 1.25rem;
+    }
 
     /* --- Quick start (collapsible) ------------------------------- */
     .quickstart summary {
@@ -246,31 +253,84 @@
         </div>
         <div class="feature">
           <div class="name">Full keyboard</div>
-          <div class="desc">Live typing and shortcuts.</div>
+          <div class="desc">Typing plus Ctrl/Alt/Win, F-keys &amp; shortcuts.</div>
         </div>
         <div class="feature">
           <div class="name">Media &amp; volume</div>
           <div class="desc">Play/pause, skip, and the volume rocker.</div>
         </div>
         <div class="feature">
+          <div class="name">Presentation</div>
+          <div class="desc">Next/prev slide, start, blackout.</div>
+        </div>
+        <div class="feature">
+          <div class="name">App launcher</div>
+          <div class="desc">Open the apps and sites you choose.</div>
+        </div>
+        <div class="feature">
           <div class="name">Power</div>
           <div class="desc">Lock, sleep, restart, shut down.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Wake-on-LAN</div>
+          <div class="desc">Turn the PC on from your phone.</div>
         </div>
         <div class="feature">
           <div class="name">Finds your PC</div>
           <div class="desc">Auto-found on your Wi-Fi.</div>
         </div>
         <div class="feature">
-          <div class="name">PIN-secured</div>
-          <div class="desc">Paired with a PIN.</div>
+          <div class="name">Portrait or landscape</div>
+          <div class="desc">Rotate however you hold it.</div>
         </div>
         <div class="feature">
           <div class="name">Local &amp; private</div>
-          <div class="desc">No cloud, no sign-in.</div>
+          <div class="desc">No cloud, no sign-in, no ads.</div>
         </div>
         <div class="feature">
           <div class="name">One-tap install</div>
           <div class="desc">One installer, firewall included.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>Security &amp; privacy</h2>
+      <p class="lead">
+        JawnRemote can move your mouse, type, and power your PC — so it's built
+        to stay on your own network and nowhere else.
+      </p>
+      <div class="features">
+        <div class="feature">
+          <div class="name">LAN-only by design</div>
+          <div class="desc">The server's firewall rule is scoped to your local
+            subnet (<code>remoteip=localsubnet</code>), so the port is invisible
+            to the internet — not just sitting behind your router.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Refuses outside connections</div>
+          <div class="desc">Even if that port were forwarded or exposed, the
+            server drops any client whose address isn't on your private network.</div>
+        </div>
+        <div class="feature">
+          <div class="name">PIN pairing</div>
+          <div class="desc">No mouse move or keystroke is accepted until a client
+            sends the PIN shown in the PC server window.</div>
+        </div>
+        <div class="feature">
+          <div class="name">Brute-force lockout</div>
+          <div class="desc">Too many wrong PINs from one address triggers a
+            temporary lockout, so it can't be guessed by hammering.</div>
+        </div>
+        <div class="feature">
+          <div class="name">No cloud, no account</div>
+          <div class="desc">Your phone talks straight to your PC over Wi-Fi.
+            Nothing is relayed through a third-party server, and there's no sign-in.</div>
+        </div>
+        <div class="feature">
+          <div class="name">No ads, no tracking</div>
+          <div class="desc">No advertising SDK, no analytics, no Advertising
+            ID — there's nothing to collect.</div>
         </div>
       </div>
     </section>
@@ -287,8 +347,8 @@
             <li>A small window opens showing your PC's <b>address</b> and a <b>PIN</b>. Leave it running.</li>
           </ol>
           <div class="callout">
-            The installer opens the firewall on all networks automatically — the
-            thing that breaks other remotes on Windows 11.
+            The installer opens the firewall for your local network automatically
+            (on any Wi-Fi profile) — the thing that breaks other remotes on Windows 11.
           </div>
           <h3>Step 2 &mdash; Get the app</h3>
           <ol>
