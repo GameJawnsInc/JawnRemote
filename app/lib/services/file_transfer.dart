@@ -350,6 +350,16 @@ class FileTransfer extends ChangeNotifier {
     }
   }
 
+  /// Open a received file with the phone's default app for that type.
+  Future<bool> openReceived(IncomingFile f) async {
+    try {
+      final ok = await _ch.invokeMethod<bool>('openFile', {'path': f.path});
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   @override
   void dispose() {
     if (identical(client.onFileFrame, _onFrame)) client.onFileFrame = null;
