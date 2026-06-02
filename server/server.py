@@ -28,6 +28,7 @@ import power_win as pwr
 import launch_win as lch
 import apps_store as appstore
 import netinfo_win as netinfo
+import clipboard_win as clip
 
 APP = "JawnRemote"
 VERSION = 1
@@ -185,6 +186,8 @@ class Handler(socketserver.StreamRequestHandler):
             return {"t": "error", "err": "unauthorized"}
         if t == "getapps":
             return {"t": "apps", "apps": appstore.load_apps()}
+        if t == "clipget":
+            return {"t": "clip", "s": clip.get_text()}
         try:
             self.do_input(t, msg)
         except Exception as e:  # never let one bad event kill the stream
@@ -218,6 +221,10 @@ class Handler(socketserver.StreamRequestHandler):
             target = msg.get("target", "")
             if lch.launch(target):
                 log(f"    launch: {target}")
+        elif t == "clipset":
+            s = msg.get("s", "")
+            if isinstance(s, str) and clip.set_text(s):
+                log("    clipboard set from phone")
 
 
 class Server(socketserver.ThreadingTCPServer):
