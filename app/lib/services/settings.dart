@@ -16,6 +16,7 @@ class Settings extends ChangeNotifier {
   String deviceName = 'Phone';
   List<RemoteHost> hosts = [];
   List<Macro> macros = [];
+  Set<String> hiddenFeatures = {}; // feature-bar buttons the user hid
 
   Future<void> load() async {
     _p = await SharedPreferences.getInstance();
@@ -40,6 +41,7 @@ class Settings extends ChangeNotifier {
         .map(Macro.decode)
         .whereType<Macro>()
         .toList();
+    hiddenFeatures = (_p.getStringList('hiddenFeatures') ?? []).toSet();
     notifyListeners();
   }
 
@@ -101,6 +103,18 @@ class Settings extends ChangeNotifier {
   Future<void> saveMacros(List<Macro> list) async {
     macros = list;
     await _p.setStringList('macros', macros.map((m) => m.encode()).toList());
+    notifyListeners();
+  }
+
+  bool isFeatureVisible(String key) => !hiddenFeatures.contains(key);
+
+  Future<void> setFeatureVisible(String key, bool visible) async {
+    if (visible) {
+      hiddenFeatures.remove(key);
+    } else {
+      hiddenFeatures.add(key);
+    }
+    await _p.setStringList('hiddenFeatures', hiddenFeatures.toList());
     notifyListeners();
   }
 }

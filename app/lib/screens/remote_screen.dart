@@ -148,70 +148,80 @@ class _RemoteScreenState extends State<RemoteScreen> {
   /// connected). Media/Keyboard toggle their bottom panels; Present opens the
   /// presenter screen; Power opens the power menu.
   Widget _featureBar(RemoteClient client) {
+    // Keys must match models/feature.dart. Hidden ones are dropped here.
+    final s = AppScope.of(context).settings;
+    final cells = <Widget>[
+      if (s.isFeatureVisible('media'))
+        Expanded(
+          child: _FeatureCell(
+            icon: Icons.play_circle_outline,
+            label: 'Media',
+            active: _media,
+            onTap: () => setState(() => _media = !_media),
+          ),
+        ),
+      if (s.isFeatureVisible('keyboard'))
+        Expanded(
+          child: _FeatureCell(
+            icon: _keyboard ? Icons.keyboard_hide : Icons.keyboard,
+            label: 'Keyboard',
+            active: _keyboard,
+            onTap: () => setState(() => _keyboard = !_keyboard),
+          ),
+        ),
+      if (s.isFeatureVisible('apps'))
+        Expanded(
+          child: _FeatureCell(
+            icon: Icons.apps,
+            label: 'Apps',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => AppsScreen(client: client))),
+          ),
+        ),
+      if (s.isFeatureVisible('macros'))
+        Expanded(
+          child: _FeatureCell(
+            icon: Icons.bolt,
+            label: 'Macros',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => MacrosScreen(client: client))),
+          ),
+        ),
+      if (s.isFeatureVisible('present'))
+        Expanded(
+          child: _FeatureCell(
+            icon: Icons.slideshow,
+            label: 'Present',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => PresentationScreen(client: client))),
+          ),
+        ),
+      if (s.isFeatureVisible('power'))
+        Expanded(
+          child: PopupMenuButton<String>(
+            tooltip: 'Power',
+            onSelected: (v) => _onPower(client, v),
+            itemBuilder: (_) => [
+              _powerItem('lock', Icons.lock_outline, 'Lock'),
+              _powerItem('sleep', Icons.bedtime_outlined, 'Sleep'),
+              const PopupMenuDivider(),
+              _powerItem('logoff', Icons.logout, 'Log off'),
+              _powerItem('restart', Icons.restart_alt, 'Restart'),
+              _powerItem('shutdown', Icons.power_settings_new, 'Shut down'),
+            ],
+            child: const _FeatureCell(
+              icon: Icons.power_settings_new,
+              label: 'Power',
+            ),
+          ),
+        ),
+    ];
+    if (cells.isEmpty) return const SizedBox.shrink();
     return Material(
       color: const Color(0xFF161C24),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        child: Row(children: [
-          Expanded(
-            child: _FeatureCell(
-              icon: Icons.play_circle_outline,
-              label: 'Media',
-              active: _media,
-              onTap: () => setState(() => _media = !_media),
-            ),
-          ),
-          Expanded(
-            child: _FeatureCell(
-              icon: _keyboard ? Icons.keyboard_hide : Icons.keyboard,
-              label: 'Keyboard',
-              active: _keyboard,
-              onTap: () => setState(() => _keyboard = !_keyboard),
-            ),
-          ),
-          Expanded(
-            child: _FeatureCell(
-              icon: Icons.apps,
-              label: 'Apps',
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => AppsScreen(client: client))),
-            ),
-          ),
-          Expanded(
-            child: _FeatureCell(
-              icon: Icons.bolt,
-              label: 'Macros',
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => MacrosScreen(client: client))),
-            ),
-          ),
-          Expanded(
-            child: _FeatureCell(
-              icon: Icons.slideshow,
-              label: 'Present',
-              onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => PresentationScreen(client: client))),
-            ),
-          ),
-          Expanded(
-            child: PopupMenuButton<String>(
-              tooltip: 'Power',
-              onSelected: (v) => _onPower(client, v),
-              itemBuilder: (_) => [
-                _powerItem('lock', Icons.lock_outline, 'Lock'),
-                _powerItem('sleep', Icons.bedtime_outlined, 'Sleep'),
-                const PopupMenuDivider(),
-                _powerItem('logoff', Icons.logout, 'Log off'),
-                _powerItem('restart', Icons.restart_alt, 'Restart'),
-                _powerItem('shutdown', Icons.power_settings_new, 'Shut down'),
-              ],
-              child: const _FeatureCell(
-                icon: Icons.power_settings_new,
-                label: 'Power',
-              ),
-            ),
-          ),
-        ]),
+        child: Row(children: cells),
       ),
     );
   }
@@ -241,7 +251,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
     final scope = AppScope.of(context);
     final client = scope.client;
     return ListenableBuilder(
-      listenable: client,
+      listenable: Listenable.merge([client, scope.settings]),
       builder: (context, _) {
         if (client.isConnected) _saveHostOnce(client);
         if (client.isConnected != _intercepting) {
