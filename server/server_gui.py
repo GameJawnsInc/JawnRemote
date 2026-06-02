@@ -16,6 +16,7 @@ import ctypes
 import winreg
 
 import tkinter as tk
+from tkinter import filedialog
 
 import server as srv
 import apps_store as appstore
@@ -156,6 +157,8 @@ class App:
                     self._set_status(f"Connected:  {info}", GREEN)
                 elif event == "disconnected":
                     self._set_status("Ready — waiting for your phone", MUTED)
+                elif event == "file_in":
+                    self._set_status(f"Received {info} ✓", GREEN)
         except queue.Empty:
             pass
         # Drain tray actions HERE, on the tk thread (safe Tcl context) -- never
@@ -228,16 +231,50 @@ class App:
                        activeforeground=FG, font=("Segoe UI", 10),
                        borderwidth=0, highlightthickness=0).pack(pady=(14, 0))
 
-        tk.Button(r, text="Manage apps…", command=self._manage_apps,
+        btn_row = tk.Frame(r, bg=BG)
+        btn_row.pack(pady=(12, 0))
+        tk.Button(btn_row, text="Manage apps…", command=self._manage_apps,
                   bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
                   relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
-                  cursor="hand2", borderwidth=0).pack(pady=(12, 0))
+                  cursor="hand2", borderwidth=0).pack(side="left", padx=(0, 6))
+        tk.Button(btn_row, text="Send file to phone…", command=self._send_file,
+                  bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
+                  relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
+                  cursor="hand2", borderwidth=0).pack(side="left")
 
         tk.Label(r, text="Keep this open to use your phone as a mouse/keyboard.",
                  bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
     def _manage_apps(self):
         AppsManager(self.root)
+
+    def _send_file(self):
+        client = self.server.latest_client()
+        if client is None:
+            self._set_status("Connect your phone first, then try again", "#E8A33D")
+            return
+        path = filedialog.askopenfilename(title="Send a file to your phone")
+        if not path:
+            return
+        name = os.path.basename(path)
+        self._set_status(f"Sending {name}…", ACCENT)
+
+        def prog(done, total):
+            pct = int(done * 100 / total) if total else 0
+            self.root.after(0, lambda: self._set_status(
+                f"Sending {name}…  {pct}%", ACCENT))
+
+        def work():
+            try:
+                ok = client.push_file(path, progress=prog)
+            except Exception:
+                ok = False
+            self.root.after(0, lambda: self._set_status(
+                f"Sent {name} to your phone ✓" if ok
+                else f"Couldn't send {name} (is the app open?)",
+                GREEN if ok else "#E8A33D"))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _set_status(self, text, color):
         self.status.configure(text="●  " + text, fg=color)

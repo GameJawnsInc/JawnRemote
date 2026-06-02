@@ -14,5 +14,6 @@ const List<FeatureDef> kFeatures = [
   FeatureDef('macros', 'Macros'),
   FeatureDef('present', 'Presentation'),
   FeatureDef('clipboard', 'Clipboard'),
+  FeatureDef('files', 'Files'),
   FeatureDef('power', 'Power'),
 ];

@@ -29,6 +29,7 @@ import launch_win as lch
 import apps_store as appstore
 import netinfo_win as netinfo
 import clipboard_win as clip
+import filexfer as fx
 
 APP = "JawnRemote"
 VERSION = 1
@@ -103,13 +104,21 @@ class Handler(socketserver.StreamRequestHandler):
             pass
         self.authed = not self.server.require_auth
         self._who = None
+        self._incoming = None           # in-progress inbound file (phone -> PC)
+        self._wlock = threading.Lock()  # serialize writes (read-loop vs GUI push)
+        self._send_cv = threading.Condition()  # outbound push ack signaling
+        self._send_acked = 0
+        self._send_stop = False
+        self._send_done = None
 
     def send(self, obj):
-        try:
-            self.wfile.write((json.dumps(obj) + "\n").encode("utf-8"))
-            self.wfile.flush()
-        except OSError:
-            pass
+        data = (json.dumps(obj) + "\n").encode("utf-8")
+        with self._wlock:
+            try:
+                self.wfile.write(data)
+                self.wfile.flush()
+            except OSError:
+                pass
 
     def handle(self):
         peer = self.client_address[0]
@@ -135,6 +144,7 @@ class Handler(socketserver.StreamRequestHandler):
         except (ConnectionError, OSError):
             pass
         finally:
+            self.server.unregister_client(self)
             log(f"[-] {peer} disconnected")
             if self._who:
                 self.server.on_event("disconnected", self._who)
@@ -175,6 +185,7 @@ class Handler(socketserver.StreamRequestHandler):
             self._record_auth_ok(peer)
             self.authed = True
             self._who = who
+            self.server.register_client(self)
             log(f"    hello from {who!r} @ {peer}: OK")
             self.server.on_event("connected", who)
             return {"t": "welcome", "ok": True, "server": self.server.server_name,
@@ -188,6 +199,9 @@ class Handler(socketserver.StreamRequestHandler):
             return {"t": "apps", "apps": appstore.load_apps()}
         if t == "clipget":
             return {"t": "clip", "s": clip.get_text()}
+        if t in ("filebeg", "filedat", "fileend", "fileabort",
+                 "fileack", "filedone"):
+            return self.do_file(t, msg)
         try:
             self.do_input(t, msg)
         except Exception as e:  # never let one bad event kill the stream
@@ -226,11 +240,124 @@ class Handler(socketserver.StreamRequestHandler):
             if isinstance(s, str) and clip.set_text(s):
                 log("    clipboard set from phone")
 
+    def do_file(self, t, msg):
+        """Handle one file-transfer frame (either direction). Returns a reply
+        dict to send back, or None. Inbound frames (filebeg/dat/end) write the
+        file to disk; fileack/filedone advance an outbound GUI->phone push."""
+        fid = msg.get("id")
+        if t == "filebeg":
+            if self._incoming:
+                self._incoming.abort()
+                self._incoming = None
+            try:
+                self._incoming = fx.Incoming(msg)
+            except (OSError, ValueError) as e:
+                return {"t": "filedone", "id": fid, "ok": False, "err": str(e)}
+            return {"t": "fileack", "id": fid, "i": -1}
+        if t == "filedat":
+            inc = self._incoming
+            if not inc or inc.id != fid:
+                return {"t": "filedone", "id": fid, "ok": False, "err": "no transfer"}
+            try:
+                i = int(msg.get("i", -1))
+                inc.write_chunk(i, msg.get("b", ""))
+                return {"t": "fileack", "id": fid, "i": i}
+            except (OSError, ValueError) as e:
+                inc.abort()
+                self._incoming = None
+                return {"t": "filedone", "id": fid, "ok": False, "err": str(e)}
+        if t == "fileend":
+            inc = self._incoming
+            if not inc or inc.id != fid:
+                return {"t": "filedone", "id": fid, "ok": False, "err": "no transfer"}
+            try:
+                path = inc.finish(msg.get("sha"))
+                self._incoming = None
+                log(f"    received file -> {path}")
+                self.server.on_event("file_in", os.path.basename(path))
+                return {"t": "filedone", "id": fid, "ok": True, "path": path}
+            except (OSError, ValueError) as e:
+                inc.abort()
+                self._incoming = None
+                return {"t": "filedone", "id": fid, "ok": False, "err": str(e)}
+        if t == "fileabort":
+            if self._incoming:
+                self._incoming.abort()
+                self._incoming = None
+            return None
+        if t == "fileack":          # ack for a file WE are pushing to the phone
+            with self._send_cv:
+                self._send_acked = max(self._send_acked, int(msg.get("i", -1)) + 1)
+                self._send_cv.notify_all()
+            return None
+        if t == "filedone":         # phone finished receiving our pushed file
+            with self._send_cv:
+                self._send_done = msg
+                self._send_cv.notify_all()
+            return None
+        return None
+
+    def push_file(self, path, progress=None):
+        """Send a local file to this connected phone (GUI -> phone). Runs on a
+        worker thread; a small ack window keeps us from outrunning the phone and
+        keeps the link's inbound side busy so the heartbeat won't trip."""
+        fid = secrets.token_hex(6)
+        with self._send_cv:
+            self._send_acked = 0
+            self._send_stop = False
+            self._send_done = None
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return False
+        total = max(1, (size + fx.CHUNK - 1) // fx.CHUNK)
+        try:
+            for frame in fx.iter_send_frames(path, fid):
+                if frame["t"] == "filedat":
+                    with self._send_cv:
+                        while (frame["i"] - self._send_acked) >= fx.ACK_WINDOW \
+                                and not self._send_stop:
+                            if not self._send_cv.wait(timeout=20):
+                                raise OSError("phone stopped acknowledging")
+                        if self._send_stop:
+                            return False
+                    if progress:
+                        try:
+                            progress(frame["i"] + 1, total)
+                        except Exception:
+                            pass
+                self.send(frame)
+            with self._send_cv:
+                if self._send_done is None:
+                    self._send_cv.wait(timeout=20)
+                done = self._send_done
+            return bool(done and done.get("ok"))
+        except (OSError, ValueError) as e:
+            log(f"    push_file error: {e!r}")
+            return False
+
 
 class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
     on_event = staticmethod(lambda event, info="": None)
+
+    def register_client(self, h):
+        with self.clients_lock:
+            if h not in self.clients:
+                self.clients.append(h)
+
+    def unregister_client(self, h):
+        with self.clients_lock:
+            try:
+                self.clients.remove(h)
+            except ValueError:
+                pass
+
+    def latest_client(self):
+        """Most recently connected authed phone (for GUI->phone file push)."""
+        with self.clients_lock:
+            return self.clients[-1] if self.clients else None
 
 
 def discovery_loop(port, server_name, stop):
@@ -289,6 +416,8 @@ def build_server(port=DEFAULT_PORT, host="0.0.0.0", pin="", require_auth=True,
     server.auth_lock = threading.Lock()
     server.fails = {}   # peer ip -> consecutive bad-PIN count
     server.bans = {}    # peer ip -> unix time the lockout expires
+    server.clients = []  # authed Handlers (most recent last) for GUI->phone push
+    server.clients_lock = threading.Lock()
     try:
         ips = get_lan_ips()
         server.mac = netinfo.get_primary_mac(ips[0] if ips else None)
