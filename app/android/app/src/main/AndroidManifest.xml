@@ -1,12 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
-    <!-- Ad-free build: the Google Mobile Ads SDK injects the Advertising-ID
-         permission at manifest-merge time. Remove it so the app requests INTERNET
-         only and can honestly declare "no Advertising ID" on Play. If ads are ever
-         re-enabled, delete this line. -->
-    <uses-permission android:name="com.google.android.gms.permission.AD_ID"
-        tools:node="remove"/>
     <application
         android:label="JawnRemote"
         android:name="${applicationName}"
@@ -38,10 +31,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-        <!-- AdMob App ID — Google's TEST id. Replace with your real AdMob app id before launch. -->
-        <meta-data
-            android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

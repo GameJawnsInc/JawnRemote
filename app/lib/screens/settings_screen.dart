@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../app_scope.dart';
-import '../config.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -9,11 +8,10 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final scope = AppScope.of(context);
     final s = scope.settings;
-    final billing = scope.billing;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListenableBuilder(
-        listenable: Listenable.merge([s, billing]),
+        listenable: s,
         builder: (context, _) => ListView(
           children: [
             ListTile(
@@ -79,31 +77,6 @@ class SettingsScreen extends StatelessWidget {
                 if (v != null) s.setDeviceName(v);
               },
             ),
-            if (kAdsEnabled) ...[
-              const Divider(height: 24),
-              if (billing.isPro)
-                const ListTile(
-                  leading: Icon(Icons.verified, color: Color(0xFF3DDC84)),
-                  title: Text('Ads removed'),
-                  subtitle: Text('Thanks for supporting JawnRemote!'),
-                )
-              else ...[
-                ListTile(
-                  leading: const Icon(Icons.block),
-                  title: Text('Remove ads — ${billing.price}'),
-                  subtitle: Text(billing.canBuy
-                      ? 'One-time purchase'
-                      : 'Unavailable right now (sign in to Google Play, or try later)'),
-                  enabled: billing.canBuy,
-                  onTap: billing.canBuy ? billing.buyRemoveAds : null,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.restore),
-                  title: const Text('Restore purchase'),
-                  onTap: billing.restore,
-                ),
-              ],
-            ],
             const Divider(height: 24),
             const Padding(
               padding: EdgeInsets.all(20),
