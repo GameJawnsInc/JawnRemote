@@ -8,6 +8,7 @@ import '../services/wol.dart';
 import '../widgets/trackpad.dart';
 import '../widgets/keyboard_bar.dart';
 import 'apps_screen.dart';
+import 'clipboard_screen.dart';
 import 'macros_screen.dart';
 import 'presentation_screen.dart';
 import 'settings_screen.dart';
@@ -61,8 +62,10 @@ class _RemoteScreenState extends State<RemoteScreen> {
     if (_saved) return;
     _saved = true;
     final scope = AppScope.of(context);
-    final name =
-        client.serverName.isNotEmpty ? client.serverName : widget.host.name;
+    // Keep a user-set name; otherwise adopt the server's hostname.
+    final name = (widget.host.customName && widget.host.name.isNotEmpty)
+        ? widget.host.name
+        : (client.serverName.isNotEmpty ? client.serverName : widget.host.name);
     final mac =
         client.serverMac.isNotEmpty ? client.serverMac : widget.host.mac;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -194,6 +197,15 @@ class _RemoteScreenState extends State<RemoteScreen> {
             label: 'Present',
             onTap: () => Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => PresentationScreen(client: client))),
+          ),
+        ),
+      if (s.isFeatureVisible('clipboard'))
+        Expanded(
+          child: _FeatureCell(
+            icon: Icons.content_paste,
+            label: 'Clipboard',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => ClipboardScreen(client: client))),
           ),
         ),
       if (s.isFeatureVisible('power'))
@@ -428,6 +440,9 @@ class _FeatureCell extends StatelessWidget {
           Icon(icon, color: fg, size: 24),
           const SizedBox(height: 3),
           Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 color: fg,
                 fontSize: 11,

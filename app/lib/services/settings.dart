@@ -87,10 +87,36 @@ class Settings extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Add or update a host (most-recent first, deduped by ip:port).
+  /// Update a saved host in place, or add a new one at the top. Preserves the
+  /// user's manual order on reconnect (no bump-to-top).
   Future<void> upsertHost(RemoteHost h) async {
-    hosts.removeWhere((e) => e.key == h.key);
-    hosts.insert(0, h);
+    final i = hosts.indexWhere((e) => e.key == h.key);
+    if (i >= 0) {
+      hosts[i] = h;
+    } else {
+      hosts.insert(0, h);
+    }
+    await _saveHosts();
+  }
+
+  /// Replace the host with [oldKey], keeping its position — used when editing a
+  /// host whose ip/port (and therefore key) may have changed.
+  Future<void> replaceHost(String oldKey, RemoteHost h) async {
+    final i = hosts.indexWhere((e) => e.key == oldKey);
+    if (i >= 0) {
+      hosts[i] = h;
+    } else {
+      hosts.insert(0, h);
+    }
+    await _saveHosts();
+  }
+
+  /// Drag-to-reorder (ReorderableListView semantics for newIndex).
+  Future<void> reorderHost(int oldIndex, int newIndex) async {
+    if (oldIndex < 0 || oldIndex >= hosts.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    final h = hosts.removeAt(oldIndex);
+    hosts.insert(newIndex.clamp(0, hosts.length), h);
     await _saveHosts();
   }
 

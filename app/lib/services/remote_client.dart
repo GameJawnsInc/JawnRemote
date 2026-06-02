@@ -24,6 +24,9 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   /// makes the Apps screen fall back to its built-in defaults).
   List<Map<String, dynamic>> serverApps = [];
 
+  /// Last clipboard text received from the PC (clipboard sync).
+  String pcClipboard = '';
+
   String _host = '';
   int _port = 8770;
   String _pin = '';
@@ -146,6 +149,10 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
           serverApps = list.whereType<Map<String, dynamic>>().toList();
           notifyListeners();
         }
+        break;
+      case 'clip':
+        pcClipboard = (msg['s'] ?? '').toString();
+        notifyListeners();
         break;
     }
   }
@@ -284,6 +291,8 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void power(String action) => _sendRaw({'t': 'power', 'action': action});
   void launch(String target) => _sendRaw({'t': 'launch', 'target': target});
   void requestApps() => _sendRaw({'t': 'getapps'});
+  void sendClipboard(String text) => _sendRaw({'t': 'clipset', 's': text});
+  void requestClipboard() => _sendRaw({'t': 'clipget'});
   void ping() => _sendRaw({'t': 'ping'});
 
   @override

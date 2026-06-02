@@ -70,6 +70,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (host != null && mounted) _open(host);
   }
 
+  Future<void> _editHost(RemoteHost h) async {
+    final edited = await showDialog<RemoteHost>(
+      context: context,
+      builder: (_) => AddHostDialog(initial: h),
+    );
+    if (edited != null && mounted) {
+      AppScope.of(context).settings.replaceHost(h.key, edited);
+    }
+  }
+
   Future<void> _connectDiscovered(DiscoveredServer srv) async {
     final scope = AppScope.of(context);
     final matches = scope.settings.hosts.where((h) => h.ip == srv.ip);
@@ -136,14 +146,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
             padding: const EdgeInsets.only(bottom: 88),
             children: [
               if (saved.isNotEmpty) const _Header('Saved'),
-              ...saved.map((h) => _HostTile(
-                    title: h.name,
-                    subtitle: '${h.ip}:${h.port}',
-                    icon: Icons.computer,
-                    onTap: () => _open(h),
-                    onWake: h.mac.isNotEmpty ? () => _wake(h) : null,
-                    onDelete: () => scope.settings.removeHost(h),
-                  )),
+              if (saved.isNotEmpty)
+                ReorderableListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  buildDefaultDragHandles: false,
+                  itemCount: saved.length,
+                  // ignore: deprecated_member_use  (onReorder's raw newIndex is what reorderHost expects)
+                  onReorder: scope.settings.reorderHost,
+                  itemBuilder: (context, i) {
+                    final h = saved[i];
+                    return _SavedTile(
+                      key: ValueKey(h.key),
+                      index: i,
+                      host: h,
+                      onTap: () => _open(h),
+                      onWake: h.mac.isNotEmpty ? () => _wake(h) : null,
+                      onEdit: () => _editHost(h),
+                      onDelete: () => scope.settings.removeHost(h),
+                    );
+                  },
+                ),
               const _Header('Discovered on Wi-Fi'),
               if (discovered.isEmpty)
                 const Padding(
@@ -201,15 +224,11 @@ class _HostTile extends StatelessWidget {
   final String title, subtitle;
   final IconData icon;
   final VoidCallback onTap;
-  final VoidCallback? onWake;
-  final VoidCallback? onDelete;
   const _HostTile({
     required this.title,
     required this.subtitle,
     required this.icon,
     required this.onTap,
-    this.onWake,
-    this.onDelete,
   });
   @override
   Widget build(BuildContext context) {
@@ -219,41 +238,106 @@ class _HostTile extends StatelessWidget {
         leading: Icon(icon),
         title: Text(title),
         subtitle: Text(subtitle),
-        trailing: onDelete == null
-            ? const Icon(Icons.chevron_right)
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (onWake != null)
-                    IconButton(
-                      tooltip: 'Wake PC (Wake-on-LAN)',
-                      icon: const Icon(Icons.power_settings_new),
-                      onPressed: onWake,
-                    ),
-                  IconButton(
-                    tooltip: 'Remove',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: onDelete,
-                  ),
-                ],
-              ),
+        trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),
     );
   }
 }
 
+class _SavedTile extends StatelessWidget {
+  final int index;
+  final RemoteHost host;
+  final VoidCallback onTap;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback? onWake;
+  const _SavedTile({
+    super.key,
+    required this.index,
+    required this.host,
+    required this.onTap,
+    required this.onEdit,
+    required this.onDelete,
+    this.onWake,
+  });
+
+  PopupMenuItem<String> _item(String value, IconData icon, String label) =>
+      PopupMenuItem<String>(
+        value: value,
+        child: Row(children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 12),
+          Text(label),
+        ]),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: ListTile(
+        leading: const Icon(Icons.computer),
+        title: Text(host.name),
+        subtitle: Text('${host.ip}:${host.port}'),
+        onTap: onTap,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PopupMenuButton<String>(
+              tooltip: 'Options',
+              onSelected: (v) {
+                if (v == 'edit') {
+                  onEdit();
+                } else if (v == 'wake') {
+                  onWake?.call();
+                } else if (v == 'remove') {
+                  onDelete();
+                }
+              },
+              itemBuilder: (_) => [
+                _item('edit', Icons.edit_outlined, 'Edit'),
+                if (onWake != null)
+                  _item('wake', Icons.power_settings_new, 'Wake PC'),
+                _item('remove', Icons.delete_outline, 'Remove'),
+              ],
+            ),
+            ReorderableDragStartListener(
+              index: index,
+              child: const Padding(
+                padding: EdgeInsets.only(left: 4, right: 8),
+                child: Icon(Icons.drag_handle, color: Colors.white38),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class AddHostDialog extends StatefulWidget {
-  const AddHostDialog({super.key});
+  final RemoteHost? initial;
+  const AddHostDialog({super.key, this.initial});
   @override
   State<AddHostDialog> createState() => _AddHostDialogState();
 }
 
 class _AddHostDialogState extends State<AddHostDialog> {
-  final _name = TextEditingController(text: 'My PC');
-  final _ip = TextEditingController();
-  final _port = TextEditingController(text: '8770');
-  final _pin = TextEditingController();
+  late final TextEditingController _name;
+  late final TextEditingController _ip;
+  late final TextEditingController _port;
+  late final TextEditingController _pin;
+
+  @override
+  void initState() {
+    super.initState();
+    final h = widget.initial;
+    _name = TextEditingController(text: h?.name ?? 'My PC');
+    _ip = TextEditingController(text: h?.ip ?? '');
+    _port = TextEditingController(text: (h?.port ?? 8770).toString());
+    _pin = TextEditingController(text: h?.pin ?? '');
+  }
 
   @override
   void dispose() {
@@ -266,8 +350,9 @@ class _AddHostDialogState extends State<AddHostDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final editing = widget.initial != null;
     return AlertDialog(
-      title: const Text('Add PC'),
+      title: Text(editing ? 'Edit PC' : 'Add PC'),
       content: SingleChildScrollView(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
@@ -298,17 +383,22 @@ class _AddHostDialogState extends State<AddHostDialog> {
             final ip = _ip.text.trim();
             if (ip.isEmpty) return;
             final port = int.tryParse(_port.text.trim()) ?? 8770;
+            final name = _name.text.trim();
             Navigator.pop(
               context,
               RemoteHost(
-                name: _name.text.trim().isEmpty ? ip : _name.text.trim(),
+                name: name.isEmpty ? ip : name,
                 ip: ip,
                 port: port,
                 pin: _pin.text.trim(),
+                mac: widget.initial?.mac ?? '',
+                // Editing locks the name; adding leaves it auto-upgradable
+                // to the server's hostname on connect.
+                customName: editing,
               ),
             );
           },
-          child: const Text('Connect'),
+          child: Text(editing ? 'Save' : 'Connect'),
         ),
       ],
     );
