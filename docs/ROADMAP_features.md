@@ -12,35 +12,40 @@ Legend: ✅ done · 🔜 next · ⏳ later · ❌ out of scope
 
 ## ✅ Done
 - **Trackpad mouse** (move, left/middle/right, scroll, drag).
-- **Full keyboard** (text + special keys + modifier shortcuts).
+- **Full keyboard** — text + one-tap **modifier/F-key/nav shortcuts** (Ctrl/Alt/
+  Win, Esc, Tab, F1–F12, arrows, Home/End/PgUp/PgDn, Copy/Cut/Paste/Undo/Redo/
+  Select-all/Alt+Tab).
 - **On-screen volume** (up/down/mute) + **hardware volume-rocker capture**.
-- **Media transport keys** — play/pause, prev, next, stop. *(UI sends the keys
-  the server already maps to VK_MEDIA_*.)*
+- **Media transport keys** — play/pause, prev, next, stop.
 - **System power controls** — lock, sleep, log off, restart, shut down
-  (destructive ones confirm on the phone first). *(New `power` server command.)*
+  (destructive ones confirm on the phone first). *(`power` server command.)*
+- **Presentation mode** — dedicated layout: next/prev slide, F5 start, Esc,
+  black/white screen, jump to first/last.
+- **App launcher (desktop-managed)** — a quick-launch grid the phone fetches from
+  the server; add/edit/reorder apps & URLs in the server window. *(`launch` +
+  `getapps` server commands.)*
+- **Wake-on-LAN** — phone learns the PC's MAC on connect, later sends a magic
+  packet to power it on.
+- **Portrait + landscape** — both orientations, overflow-safe.
 - **Multi-PC basics** — saved hosts + UDP auto-discovery.
-- **Local-only / no account / PIN auth** — the trust + privacy model users want.
+- **Trust & privacy** — local-only, no account, PIN auth, **LAN-scoped firewall**,
+  **non-LAN connection refusal**, **brute-force lockout**, **fully free & ad-free**.
 
 ## 🔜 Next (high demand, good ROI)
-1. **Presentation mode** — a dedicated layout: next/prev slide (PageDn/PageUp or
-   arrows), F5 start, Esc, B/W to black/white the screen. *Pure key events — the
-   server already supports them; it's a Flutter screen.* Big with one segment.
-2. **App quick-launch / a few app-remotes** — open YouTube/Netflix/Spotify/VLC/
-   Kodi + their media keys. Needs one new `launch` server command (open app/URL).
-   A small curated set (not UR's 90+) captures most of the value. Good **paid Pro**
-   candidate.
-3. **Extended-key polish** — make sure Ctrl/Alt/Win/Esc/F-keys/Tab + shortcuts are
-   all one tap and reliably fire (competitors paywall these — keep them free).
+1. **Rock-solid reconnect** — the engineering north star (below). Auto-reconnect
+   exists; make it instant + invisible with an unmistakable connection state.
+   It's the #1 complaint about every competitor — treat it as a headline feature.
+2. **Custom buttons & macros** — user-defined buttons that fire keystrokes or
+   launch apps/sequences. Builds straight on the desktop-managed app list we
+   already ship; add a server `exec`/sequence path (local-trust only). Sticky,
+   loyal audience; UR paywalls it. Strongest **Pro** candidate.
+3. **Multi-PC polish** — rename/reorder saved PCs, per-PC settings, quick switch.
+4. **Clipboard sync** — send/receive clipboard text (cheap, KDE-Connect parity).
 
 ## ⏳ Later (power users / niches)
-4. **Custom buttons & macros** — user-defined buttons that send keystrokes/launch
-   apps. Sticky, loyal audience; UR paywalls it. Bigger UI + a server `exec` path
-   (local-trust only). Strong **Pro** feature.
-5. **Wake-on-LAN** — phone sends a magic packet to power the PC *on* (when the
-   server isn't running). Store the PC's MAC; HTPC crowd wants it.
-6. **Multi-PC polish** — rename/reorder saved PCs, per-PC settings.
-7. **Landscape / tablet layout** — competitors paywall landscape; free = edge.
-8. **Clipboard sync** — send/receive clipboard text (cheap, KDE-Connect parity).
+5. **Tablet/big-screen layout** — landscape already works; this makes the controls
+   shine on tablets (e.g. side-by-side trackpad + button cluster).
+6. **Per-PC profiles** — remembered pointer speed / scroll / layout per saved PC.
 
 ## ❌ Out of scope (off-strategy / heavy)
 - **Screen mirroring / remote desktop** — different product; Chrome Remote
@@ -51,11 +56,12 @@ Legend: ✅ done · 🔜 next · ⏳ later · ❌ out of scope
 ---
 
 ## Monetization fit
-- **Free, ad-free:** mouse, keyboard, volume, **media transport, power controls,
-  modifier keys** — exactly what competitors charge for. This is the wedge.
-- **One-time "Pro pack" (~$5–15, not a subscription):** presentation mode,
-  app-remotes, custom buttons/macros, multi-PC, landscape. Keep the existing
-  $1.99 remove-ads, add Pro later. **Never** a second paywall or subscription —
+- **Shipping 100% free & ad-free today** — ads are disabled (no SDK / no Ad-ID)
+  and the app gives away everything competitors paywall (media, power, modifiers,
+  presentation, app-launch, WoL, landscape). That generosity *is* the wedge.
+- **Optional one-time "Pro pack" later (~$5–15, never a subscription):** the
+  heavier power-user tier — custom buttons/macros above all. The dormant
+  `remove_ads` IAP scaffolding can be repurposed. **Never** a subscription —
   that's the exact thing users rage about in competitor reviews.
 
 ## Engineering north star
