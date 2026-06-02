@@ -62,6 +62,7 @@ You pick this once at signup and it's hard to change later.
 - [ ] **Play App Signing**: upload with your **upload key**; Google holds the **app signing key** and signs what users download.
   - ⚠️ This is exactly why your **website APK (upload-key-signed) and the Play version (app-signing-key-signed) can't update over each other** — different signatures. Fine to keep both channels; just know users must pick one.
 - [ ] **Ad-free build: skip.** *Only if you re-enable ads:* swap **AdMob test IDs for real ad unit IDs** (app ID in `AndroidManifest.xml` + banner unit) — shipping test IDs to production violates AdMob policy.
+- [ ] **Strip the Advertising-ID permission** (ad-free build): the bundled Google Mobile Ads SDK merges `com.google.android.gms.permission.AD_ID` into the manifest even with ads off. Add `<uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>` (with the `tools:` namespace on `<manifest>`) so the shipped build truly requests no Ad ID — keeping the **INTERNET-only** permission set and the **"No data collected"** declaration honest.
 - [ ] Confirm **Play Billing Library 8+** (mandatory for new submissions since Aug 31, 2025; `in_app_purchase` should pull a compatible version — verify).
 
 ## Phase 2 — Store listing + compliance (the rejection magnets)
