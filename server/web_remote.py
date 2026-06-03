@@ -14,12 +14,15 @@ import hashlib
 import json
 import struct
 
+import apps_store
+import clipboard_win as clip
+
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 # Event types a browser is allowed to send (everything do_input handles except
 # nothing dangerous; no file frames over the browser channel in v1).
 SAFE_INPUT = {"m", "click", "down", "up", "scroll", "text", "key",
-              "power", "launch"}
+              "power", "launch", "clipset"}
 
 HTTP_VERBS = (b"GET", b"POST", b"HEAD", b"PUT", b"DELETE", b"OPTIONS")
 
@@ -215,6 +218,16 @@ def _ws_loop(handler, log=print):
 
             if t == "ping":
                 _ws_send(handler, {"t": "pong"})
+            elif t == "clipget":
+                try:
+                    _ws_send(handler, {"t": "clip", "s": clip.get_text()})
+                except Exception as e:
+                    log(f"    web clipget error: {e!r}")
+            elif t == "getapps":
+                try:
+                    _ws_send(handler, {"t": "apps", "apps": apps_store.load_apps()})
+                except Exception as e:
+                    log(f"    web getapps error: {e!r}")
             elif t in SAFE_INPUT:
                 try:
                     handler.do_input(t, msg)
@@ -239,42 +252,69 @@ PAGE = r"""<!doctype html>
 <meta name="color-scheme" content="dark">
 <title>JawnRemote</title>
 <style>
-  :root{--bg:#0E1116;--card:#161C24;--accent:#4F8CFF;--ink:#fff;--muted:#8A94A6}
+  :root{--bg:#0E1116;--card:#161C24;--accent:#4F8CFF;--ink:#fff;--muted:#8A94A6;--amber:#E8A33D;--green:#3DDC84;--red:#FF6B6B}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font-family:'Segoe UI',system-ui,Arial,sans-serif;overscroll-behavior:none}
   body{display:flex;flex-direction:column;height:100dvh}
-  header{display:flex;align-items:center;gap:10px;padding:12px 16px;
+  header{display:flex;align-items:center;gap:10px;padding:12px 16px;flex:none;
     border-bottom:1px solid #ffffff14;font-weight:600}
-  #dot{width:10px;height:10px;border-radius:50%;background:#E8A33D}
-  #dot.on{background:#3DDC84}
-  #pad{flex:1;margin:12px;border-radius:14px;background:var(--card);
+  #dot{width:10px;height:10px;border-radius:50%;background:var(--amber);flex:none}
+  #dot.on{background:var(--green)}
+  #title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  main{flex:1;min-height:0;display:flex;flex-direction:column}
+  .panel{flex:1;min-height:0;display:none;flex-direction:column;gap:12px;padding:12px;
+    overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .panel.on{display:flex}
+  #pad{flex:1;min-height:200px;border-radius:14px;background:var(--card);
     display:flex;align-items:center;justify-content:center;text-align:center;
-    color:var(--muted);font-size:14px;touch-action:none;user-select:none;
-    -webkit-user-select:none}
-  .row{display:flex;gap:10px;padding:0 12px}
-  .btn{flex:1;padding:16px;border:none;border-radius:12px;background:var(--card);
+    color:var(--muted);font-size:14px;line-height:1.6;padding:16px;
+    touch-action:none;user-select:none;-webkit-user-select:none}
+  .row{display:flex;gap:10px}
+  .btn{padding:16px;border:none;border-radius:12px;background:var(--card);
     color:var(--ink);font-size:15px;font-weight:600;cursor:pointer;
     touch-action:manipulation}
+  .row .btn{flex:1}
   .btn:active{background:#1F2733}
-  .typerow{display:flex;gap:10px;padding:12px}
-  #typer{flex:1;padding:14px;border-radius:12px;border:1px solid #ffffff1f;
+  .btn.danger{color:var(--red)}
+  #typer{width:100%;padding:14px;border-radius:12px;border:1px solid #ffffff1f;
     background:var(--card);color:var(--ink);font-size:16px}
-  #keys{display:flex;gap:8px;padding:0 12px 12px;flex-wrap:wrap}
-  .key{padding:10px 14px;border:none;border-radius:10px;background:var(--card);
-    color:var(--ink);font-size:14px;cursor:pointer}
+  .keys{display:flex;gap:8px;flex-wrap:wrap}
+  .key{padding:11px 15px;border:none;border-radius:10px;background:var(--card);
+    color:var(--ink);font-size:14px;cursor:pointer;touch-action:manipulation}
   .key:active{background:#1F2733}
-  /* login overlay */
+  .key.mod.on{background:var(--accent);color:#08101f}
+  .label{color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+  details summary{color:var(--muted);font-size:13px;cursor:pointer;padding:4px 0}
+  #clipbox{width:100%;height:88px;padding:12px;border-radius:12px;resize:none;
+    border:1px solid #ffffff1f;background:var(--card);color:var(--ink);
+    font-size:15px;font-family:inherit}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .bigbtn{padding:20px 4px;border:none;border-radius:14px;background:var(--card);
+    color:var(--ink);font-size:15px;font-weight:600;cursor:pointer;
+    touch-action:manipulation}
+  .bigbtn:active{background:#1F2733}
+  #appgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .app{padding:18px 12px;border:none;border-left:4px solid var(--accent);
+    border-radius:12px;background:var(--card);color:var(--ink);font-size:15px;
+    font-weight:600;text-align:left;cursor:pointer;touch-action:manipulation;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .app:active{background:#1F2733}
+  .hint{color:var(--muted);font-size:13px;text-align:center;padding:16px}
+  nav#tabs{display:flex;flex:none;border-top:1px solid #ffffff14}
+  .tab{flex:1;padding:13px 2px;background:none;border:none;color:var(--muted);
+    font-size:13px;font-weight:600;letter-spacing:.03em;cursor:pointer}
+  .tab.on{color:var(--accent);box-shadow:inset 0 2px 0 var(--accent)}
   #login{position:fixed;inset:0;background:var(--bg);display:flex;
     flex-direction:column;align-items:center;justify-content:center;gap:16px;
     padding:24px;z-index:10}
   #login h1{font-size:1.6rem;letter-spacing:.15em;text-transform:uppercase;margin:0}
-  #login p{color:var(--muted);margin:0}
+  #login p{color:var(--muted);margin:0;text-align:center}
   #pin{font-size:24px;letter-spacing:.3em;text-align:center;width:200px;padding:12px;
     border-radius:12px;border:1px solid #ffffff1f;background:var(--card);color:var(--ink)}
   #go{padding:14px 28px;border:none;border-radius:12px;background:var(--accent);
     color:#08101f;font-weight:700;font-size:16px;cursor:pointer}
-  #msg{color:#E8A33D;min-height:1.2em}
+  #msg{color:var(--amber);min-height:1.2em}
   .hidden{display:none!important}
 </style>
 </head>
@@ -288,30 +328,113 @@ PAGE = r"""<!doctype html>
   </div>
 
   <header><span id="dot"></span><span id="title">Connecting…</span></header>
-  <div id="pad">Drag to move &middot; tap to click<br>Two fingers: scroll &middot; two-finger tap: right-click</div>
-  <div class="row">
-    <button class="btn" id="lclick">Left&nbsp;click</button>
-    <button class="btn" id="rclick">Right&nbsp;click</button>
-  </div>
-  <div class="typerow">
-    <input id="typer" placeholder="Tap to type on the PC…" autocomplete="off"
-           autocapitalize="off" autocorrect="off" spellcheck="false">
-  </div>
-  <div id="keys">
-    <button class="key" data-k="backspace">⌫</button>
-    <button class="key" data-k="enter">⏎</button>
-    <button class="key" data-k="tab">Tab</button>
-    <button class="key" data-k="escape">Esc</button>
-    <button class="key" data-k="up">▲</button>
-    <button class="key" data-k="down">▼</button>
-    <button class="key" data-k="left">◀</button>
-    <button class="key" data-k="right">▶</button>
-  </div>
+
+  <main>
+    <section class="panel on" data-panel="touch">
+      <div id="pad">Drag to move &middot; tap to click<br>Two fingers: scroll &middot; two-finger tap: right-click<br>Double-tap &amp; hold to drag</div>
+      <div class="row">
+        <button class="btn" id="lclick">Left&nbsp;click</button>
+        <button class="btn" id="rclick">Right&nbsp;click</button>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="keys">
+      <input id="typer" placeholder="Tap to type on the PC…" autocomplete="off"
+             autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div class="keys">
+        <button class="key" data-k="backspace">⌫</button>
+        <button class="key" data-k="enter">⏎</button>
+        <button class="key" data-k="tab">Tab</button>
+        <button class="key" data-k="escape">Esc</button>
+        <button class="key" data-k="delete">Del</button>
+        <button class="key" data-k="up">▲</button>
+        <button class="key" data-k="down">▼</button>
+        <button class="key" data-k="left">◀</button>
+        <button class="key" data-k="right">▶</button>
+      </div>
+      <div class="label">Modifiers — tap, then a key or letter</div>
+      <div class="keys">
+        <button class="key mod" data-mod="ctrl">Ctrl</button>
+        <button class="key mod" data-mod="alt">Alt</button>
+        <button class="key mod" data-mod="shift">Shift</button>
+        <button class="key mod" data-mod="win">Win</button>
+      </div>
+      <div class="label">Shortcuts</div>
+      <div class="keys">
+        <button class="key" data-k="c" data-m="ctrl">Copy</button>
+        <button class="key" data-k="v" data-m="ctrl">Paste</button>
+        <button class="key" data-k="x" data-m="ctrl">Cut</button>
+        <button class="key" data-k="z" data-m="ctrl">Undo</button>
+        <button class="key" data-k="a" data-m="ctrl">All</button>
+        <button class="key" data-k="s" data-m="ctrl">Save</button>
+        <button class="key" data-k="tab" data-m="alt">Alt+Tab</button>
+        <button class="key" data-k="f4" data-m="alt">Alt+F4</button>
+        <button class="key" data-k="d" data-m="win">Win+D</button>
+        <button class="key" data-k="e" data-m="win">Win+E</button>
+        <button class="key" data-k="printscreen">PrtSc</button>
+      </div>
+      <details>
+        <summary>Function keys</summary>
+        <div class="keys" id="fkeys"></div>
+      </details>
+      <div class="label">Clipboard</div>
+      <textarea id="clipbox" placeholder="Type or paste here, then Send to PC. Get from PC fills this box."></textarea>
+      <div class="row">
+        <button class="btn" id="clipsend">Send to PC</button>
+        <button class="btn" id="clipgetb">Get from PC</button>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="media">
+      <div class="label">Media</div>
+      <div class="grid3">
+        <button class="bigbtn" data-k="mediaprev">Prev</button>
+        <button class="bigbtn" data-k="mediaplaypause">Play / Pause</button>
+        <button class="bigbtn" data-k="medianext">Next</button>
+      </div>
+      <div class="label">Volume</div>
+      <div class="grid3">
+        <button class="bigbtn" data-rk="volumedown">Vol &minus;</button>
+        <button class="bigbtn" data-k="volumemute">Mute</button>
+        <button class="bigbtn" data-rk="volumeup">Vol +</button>
+      </div>
+      <div class="label">Presentation</div>
+      <div class="grid3">
+        <button class="bigbtn" data-k="f5">Start</button>
+        <button class="bigbtn" data-k="pageup">Prev</button>
+        <button class="bigbtn" data-k="pagedown">Next</button>
+        <button class="bigbtn" data-k="b">Black</button>
+        <button class="bigbtn" data-k="escape">End</button>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="power">
+      <div class="label">Power</div>
+      <button class="btn" data-power="lock">Lock</button>
+      <button class="btn" data-power="sleep">Sleep</button>
+      <button class="btn danger" data-power="restart" data-confirm="Restart the PC?">Restart</button>
+      <button class="btn danger" data-power="shutdown" data-confirm="Shut down the PC?">Shut down</button>
+      <button class="btn danger" data-power="logoff" data-confirm="Log off the PC?">Log off</button>
+    </section>
+
+    <section class="panel" data-panel="apps">
+      <div id="appgrid"></div>
+      <div class="hint" id="appshint">Loading your apps…</div>
+    </section>
+  </main>
+
+  <nav id="tabs">
+    <button class="tab on" data-tab="touch">Touch</button>
+    <button class="tab" data-tab="keys">Keys</button>
+    <button class="tab" data-tab="media">Media</button>
+    <button class="tab" data-tab="power">Power</button>
+    <button class="tab" data-tab="apps">Apps</button>
+  </nav>
 
 <script>
 (function(){
   var MOVE=1.5, SCROLL=3;            // sensitivity
-  var ws=null, ready=false, pin="";
+  var ws=null, ready=false, pin="", appsLoaded=false;
   var dot=document.getElementById('dot'), title=document.getElementById('title');
   var login=document.getElementById('login'), msg=document.getElementById('msg');
 
@@ -331,10 +454,14 @@ PAGE = r"""<!doctype html>
         else { ready=false; login.classList.remove('hidden');
           msg.textContent = m.err==='locked'
             ? 'Too many tries — wait a minute.' : 'Wrong PIN.'; }
+      } else if(m.t==='clip'){
+        document.getElementById('clipbox').value = m.s||'';
+      } else if(m.t==='apps'){
+        renderApps(m.apps||[]);
       }
     };
     ws.onclose=function(){ ready=false; dot.classList.remove('on');
-      if(!login.classList.contains('hidden')) {} else title.textContent='Reconnecting…';
+      if(login.classList.contains('hidden')) title.textContent='Reconnecting…';
       retry(); };
     ws.onerror=function(){ try{ws.close();}catch(e){} };
   }
@@ -350,6 +477,33 @@ PAGE = r"""<!doctype html>
     if(e.key==='Enter') document.getElementById('go').click(); });
 
   setInterval(function(){ if(ready) send({t:'ping'}); }, 4000);
+
+  // ---- tabs ----
+  function showTab(name){
+    Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
+      b.classList.toggle('on', b.dataset.tab===name); });
+    Array.prototype.forEach.call(document.querySelectorAll('.panel'),function(p){
+      p.classList.toggle('on', p.dataset.panel===name); });
+    if(name!=='keys'){ var a=document.activeElement; if(a&&a.blur) a.blur(); }
+    if(name==='apps' && !appsLoaded) send({t:'getapps'});
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
+    b.addEventListener('click',function(){ showTab(b.dataset.tab); });
+  });
+
+  // ---- modifiers (one-shot, applied to the next key/letter) ----
+  var armed=[];
+  function clearMods(){ armed=[];
+    Array.prototype.forEach.call(document.querySelectorAll('.mod'),function(b){
+      b.classList.remove('on'); }); }
+  Array.prototype.forEach.call(document.querySelectorAll('.mod'),function(b){
+    b.addEventListener('click',function(){
+      var m=b.dataset.mod, i=armed.indexOf(m);
+      if(i>=0){ armed.splice(i,1); b.classList.remove('on'); }
+      else { armed.push(m); b.classList.add('on'); }
+    });
+  });
+  function sendKey(k){ send({t:'key',k:k,m:armed.slice()}); if(armed.length) clearMods(); }
 
   // ---- trackpad ----
   var pad=document.getElementById('pad');
@@ -399,25 +553,81 @@ PAGE = r"""<!doctype html>
   pad.addEventListener('pointerup',up);
   pad.addEventListener('pointercancel',up);
 
-  // ---- buttons ----
   document.getElementById('lclick').onclick=function(){ send({t:'click',b:'left'}); };
   document.getElementById('rclick').onclick=function(){ send({t:'click',b:'right'}); };
 
   // ---- typing ----
   var typer=document.getElementById('typer');
   typer.addEventListener('input',function(e){
-    if(e.inputType&&e.inputType.indexOf('delete')===0) send({t:'key',k:'backspace'});
-    else if(e.data) send({t:'text',s:e.data});
+    if(e.inputType&&e.inputType.indexOf('delete')===0){ send({t:'key',k:'backspace'}); }
+    else if(e.data){
+      if(armed.length && e.data.length===1) sendKey(e.data);
+      else send({t:'text',s:e.data});
+    }
     typer.value='';
   });
   typer.addEventListener('keydown',function(e){
     var map={Enter:'enter',Tab:'tab',Escape:'escape',ArrowUp:'up',ArrowDown:'down',
              ArrowLeft:'left',ArrowRight:'right',Backspace:'backspace'};
-    if(map[e.key]){ send({t:'key',k:map[e.key]}); e.preventDefault(); }
+    if(map[e.key]){ sendKey(map[e.key]); e.preventDefault(); }
   });
-  Array.prototype.forEach.call(document.querySelectorAll('#keys .key'),function(b){
-    b.addEventListener('click',function(){ send({t:'key',k:b.dataset.k}); typer.focus(); });
+
+  // ---- key buttons: nav + shortcuts + F-keys ----
+  var fk=document.getElementById('fkeys');
+  for(var i=1;i<=12;i++){ var fb=document.createElement('button');
+    fb.className='key'; fb.setAttribute('data-k','f'+i); fb.textContent='F'+i;
+    fk.appendChild(fb); }
+  Array.prototype.forEach.call(document.querySelectorAll('.keys .key'),function(b){
+    if(b.classList.contains('mod')) return;
+    b.addEventListener('click',function(){
+      if(b.dataset.m) send({t:'key',k:b.dataset.k,m:b.dataset.m.split('+')});
+      else { sendKey(b.dataset.k); typer.focus(); }
+    });
   });
+
+  // ---- media / presentation (single) + volume (repeat-on-hold) ----
+  Array.prototype.forEach.call(document.querySelectorAll('[data-k]'),function(b){
+    if(b.closest('.keys')) return;            // nav/shortcut/F-keys wired above
+    b.addEventListener('click',function(){ send({t:'key',k:b.dataset.k}); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-rk]'),function(b){
+    var timer=null, k=b.dataset.rk;
+    function fire(){ send({t:'key',k:k}); }
+    function stop(){ if(timer){ clearInterval(timer); timer=null; } }
+    b.addEventListener('pointerdown',function(e){ fire(); timer=setInterval(fire,180); e.preventDefault(); });
+    b.addEventListener('pointerup',stop);
+    b.addEventListener('pointerleave',stop);
+    b.addEventListener('pointercancel',stop);
+  });
+
+  // ---- power ----
+  Array.prototype.forEach.call(document.querySelectorAll('[data-power]'),function(b){
+    b.addEventListener('click',function(){
+      var c=b.dataset.confirm;
+      if(c && !window.confirm(c)) return;
+      send({t:'power',action:b.dataset.power});
+    });
+  });
+
+  // ---- clipboard ----
+  document.getElementById('clipsend').onclick=function(){
+    send({t:'clipset',s:document.getElementById('clipbox').value}); };
+  document.getElementById('clipgetb').onclick=function(){ send({t:'clipget'}); };
+
+  // ---- apps ----
+  function renderApps(apps){
+    appsLoaded=true;
+    var g=document.getElementById('appgrid'); g.innerHTML='';
+    var hint=document.getElementById('appshint');
+    if(!apps.length){ hint.style.display=''; hint.textContent='No apps configured yet — add them in the PC app list.'; return; }
+    hint.style.display='none';
+    apps.forEach(function(a){
+      var b=document.createElement('button'); b.className='app'; b.textContent=a.name;
+      if(a.color) b.style.borderLeftColor='#'+a.color;
+      b.addEventListener('click',function(){ send({t:'launch',target:a.target}); });
+      g.appendChild(b);
+    });
+  }
 })();
 </script>
 </body>
