@@ -254,6 +254,14 @@ class App:
         tk.Label(r, text="Keep this open to use your phone as a mouse/keyboard.",
                  bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="bottom", pady=10)
 
+        self._fit_window()
+
+    def _fit_window(self):
+        """Size the window to fit all controls so the action buttons are never
+        clipped (content height varies with firewall state and IP count)."""
+        self.root.update_idletasks()
+        self.root.geometry(f"440x{self.root.winfo_reqheight()}")
+
     def _manage_apps(self):
         AppsManager(self.root)
 
@@ -307,6 +315,7 @@ class App:
                 text="Firewall not set up — phone can't connect yet", fg="#E8A33D")
             self.fw_btn.pack()
             self._set_status("Ready — waiting for your phone", MUTED)
+        self._fit_window()
 
     def _on_firewall(self):
         add_firewall_rules()
