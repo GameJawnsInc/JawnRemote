@@ -251,8 +251,12 @@ class App:
                   relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
                   cursor="hand2", borderwidth=0).pack()
 
-        tk.Label(r, text="Keep this open to use your phone as a mouse/keyboard.",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="bottom", pady=10)
+        tk.Label(r,
+                 text="Keep this open to use your phone as a mouse/keyboard.\n"
+                      "Closing (X) keeps it running in the tray — "
+                      "right-click the tray icon to quit.",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 8), justify="center"
+                 ).pack(side="bottom", pady=10)
 
         self._fit_window()
 
