@@ -8,7 +8,7 @@
 ; The open port stays invisible to the internet.
 
 #define MyAppName "JawnRemote"
-#define MyAppVersion "1.10.1"
+#define MyAppVersion "1.11.0"
 #define MyAppPublisher "Jawnston Inc."
 #define MyAppExeName "JawnRemoteServer.exe"
 #define Port "8770"
