@@ -22,6 +22,7 @@ from tkinter import filedialog
 import server as srv
 import apps_store as appstore
 import filexfer as fx
+import qr
 
 try:
     import tray_win
@@ -264,12 +265,11 @@ class App:
         web_row.pack(pady=(2, 0))
         url = tk.Label(web_row, text=f"http://{self.ips[0]}:{PORT}/",
                        bg=BG, fg=ACCENT, font=("Consolas", 10), cursor="hand2")
-        url.pack(side="left", padx=(0, 8))
+        url.pack()
         url.bind("<Button-1>", lambda e: self._open_browser())
-        tk.Button(web_row, text="Open", command=self._open_browser,
-                  bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
-                  relief="flat", font=("Segoe UI", 9), padx=10, pady=3,
-                  cursor="hand2", borderwidth=0).pack(side="left")
+        self._qr_canvas(r).pack(pady=(8, 0))
+        tk.Label(r, text="Point your phone camera here to connect",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(pady=(3, 0))
 
         tk.Label(r,
                  text="Keep this open to use your phone as a mouse/keyboard.\n"
@@ -341,6 +341,23 @@ class App:
             webbrowser.open(f"http://{self.ips[0]}:{PORT}/")
         except Exception:
             pass
+
+    def _qr_canvas(self, parent):
+        """A scannable QR of the browser-remote URL (pure-stdlib generator)."""
+        mods = qr.matrix(f"http://{self.ips[0]}:{PORT}/#{self.pin}")
+        n = len(mods)
+        quiet, scale = 4, 4
+        dim = (n + 2 * quiet) * scale
+        cv = tk.Canvas(parent, width=dim, height=dim, bg="white",
+                       highlightthickness=0, bd=0)
+        for rr in range(n):
+            for cc in range(n):
+                if mods[rr][cc]:
+                    x = (cc + quiet) * scale
+                    y = (rr + quiet) * scale
+                    cv.create_rectangle(x, y, x + scale, y + scale,
+                                        fill="black", outline="")
+        return cv
 
     def _set_status(self, text, color):
         self.status.configure(text="●  " + text, fg=color)
