@@ -14,6 +14,7 @@ Zero external dependencies -- just run with Python 3.
 """
 import argparse
 import ipaddress
+import itertools
 import json
 import os
 import secrets
@@ -30,6 +31,7 @@ import apps_store as appstore
 import netinfo_win as netinfo
 import clipboard_win as clip
 import filexfer as fx
+import web_remote
 
 APP = "JawnRemote"
 VERSION = 1
@@ -127,9 +129,19 @@ class Handler(socketserver.StreamRequestHandler):
         if getattr(self.server, "lan_only", True) and not is_lan_ip(peer):
             log(f"[!] refused non-LAN connection from {peer}")
             return
+        first = self.rfile.readline()
+        if not first:
+            return
+        if web_remote.looks_like_http(first):
+            # A browser hit the same port -> serve the no-install web remote.
+            try:
+                web_remote.serve(self, first, log=log)
+            except (ConnectionError, OSError):
+                pass
+            return
         log(f"[+] {peer} connected")
         try:
-            for raw in self.rfile:
+            for raw in itertools.chain([first], self.rfile):
                 line = raw.strip()
                 if not line:
                     continue
@@ -397,6 +409,8 @@ def banner(name, ips, port, pin, require_auth):
     log("  In the phone app, connect to one of these addresses:")
     for ip in ips:
         log(f"      {ip} : {port}")
+    if ips:
+        log(f"\n  Or open in any browser on the same Wi-Fi:  http://{ips[0]}:{port}/")
     if require_auth:
         log(f"\n  PIN:  {pin}      (saved in pin.txt)")
     else:
@@ -413,6 +427,7 @@ def build_server(port=DEFAULT_PORT, host="0.0.0.0", pin="", require_auth=True,
     server.pin = pin
     server.server_name = socket.gethostname()
     server.lan_only = lan_only
+    server.web_enabled = True   # browser remote on by default (GUI can toggle)
     server.auth_lock = threading.Lock()
     server.fails = {}   # peer ip -> consecutive bad-PIN count
     server.bans = {}    # peer ip -> unix time the lockout expires
