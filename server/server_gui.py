@@ -12,6 +12,7 @@ import queue
 import subprocess
 import threading
 import traceback
+import webbrowser
 import ctypes
 import winreg
 
@@ -125,6 +126,7 @@ class App:
         self.pin = srv.load_or_create_pin(None)
 
         self._tray_hint = os.path.join(data_dir(), "tray_hint_shown")
+        self._web_off_flag = os.path.join(data_dir(), "web_off")
         self._build_ui()
         self._start_server()
         self._poll_events()
@@ -144,6 +146,7 @@ class App:
     def _start_server(self):
         self.server = srv.build_server(PORT, "0.0.0.0", self.pin, True,
                                        on_event=self._on_event)
+        self.server.web_enabled = self.web_var.get()
         srv.start_discovery(PORT, self.name)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
@@ -251,6 +254,23 @@ class App:
                   relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
                   cursor="hand2", borderwidth=0).pack()
 
+        self.web_var = tk.BooleanVar(value=not os.path.exists(self._web_off_flag))
+        tk.Checkbutton(r, text="Allow browser remote (control from any device, no app)",
+                       variable=self.web_var, command=self._on_web_toggle,
+                       bg=BG, fg=MUTED, selectcolor=CARD, activebackground=BG,
+                       activeforeground=FG, font=("Segoe UI", 9),
+                       borderwidth=0, highlightthickness=0).pack(pady=(14, 0))
+        web_row = tk.Frame(r, bg=BG)
+        web_row.pack(pady=(2, 0))
+        url = tk.Label(web_row, text=f"http://{self.ips[0]}:{PORT}/",
+                       bg=BG, fg=ACCENT, font=("Consolas", 10), cursor="hand2")
+        url.pack(side="left", padx=(0, 8))
+        url.bind("<Button-1>", lambda e: self._open_browser())
+        tk.Button(web_row, text="Open", command=self._open_browser,
+                  bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
+                  relief="flat", font=("Segoe UI", 9), padx=10, pady=3,
+                  cursor="hand2", borderwidth=0).pack(side="left")
+
         tk.Label(r,
                  text="Keep this open to use your phone as a mouse/keyboard.\n"
                       "Closing (X) keeps it running in the tray — "
@@ -304,6 +324,23 @@ class App:
             os.startfile(folder)
         except OSError:
             self._set_status("Couldn't open the files folder", "#E8A33D")
+
+    def _on_web_toggle(self):
+        on = self.web_var.get()
+        self.server.web_enabled = on
+        try:
+            if on and os.path.exists(self._web_off_flag):
+                os.remove(self._web_off_flag)
+            elif not on:
+                open(self._web_off_flag, "w").close()
+        except OSError:
+            pass
+
+    def _open_browser(self):
+        try:
+            webbrowser.open(f"http://{self.ips[0]}:{PORT}/")
+        except Exception:
+            pass
 
     def _set_status(self, text, color):
         self.status.configure(text="●  " + text, fg=color)
