@@ -628,6 +628,17 @@ PAGE = r"""<!doctype html>
       g.appendChild(b);
     });
   }
+
+  // ---- scan-to-connect: the PIN may arrive in the URL fragment (#1234) ----
+  // Fragments are never sent to the server; strip it from history immediately
+  // so the PIN doesn't linger in the address bar / browser history.
+  var hp = (location.hash || '').replace(/^#/, '').trim();
+  if (/^\d{3,12}$/.test(hp)) {
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    document.getElementById('pin').value = hp;
+    pin = hp;
+    connect();
+  }
 })();
 </script>
 </body>
