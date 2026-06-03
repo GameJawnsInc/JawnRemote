@@ -353,9 +353,9 @@ PAGE = r"""<!doctype html>
 
   // ---- trackpad ----
   var pad=document.getElementById('pad');
-  var pts={}, n=0, last=null, maxN=0, moved=false, startT=0;
+  var pts={}, n=0, maxN=0, moved=false, startT=0, sx=0, sy=0;
+  var lastUp=0, lux=0, luy=0, holding=false;
   function avgMove(e){
-    // average movement of all active pointers since last event
     var p=pts[e.pointerId]; if(!p) return {dx:0,dy:0};
     var dx=e.clientX-p.x, dy=e.clientY-p.y; p.x=e.clientX; p.y=e.clientY;
     return {dx:dx,dy:dy};
@@ -363,11 +363,20 @@ PAGE = r"""<!doctype html>
   pad.addEventListener('pointerdown',function(e){
     pad.setPointerCapture(e.pointerId);
     pts[e.pointerId]={x:e.clientX,y:e.clientY}; n++;
-    if(n===1){ maxN=1; moved=false; startT=Date.now(); } else { maxN=Math.max(maxN,n); }
+    if(n===1){
+      maxN=1; moved=false; startT=Date.now(); sx=e.clientX; sy=e.clientY;
+      // double-tap-and-hold: a quick 2nd tap near the 1st holds the left button
+      // (the OS reads it as double-click-drag -> select text / move windows)
+      if(Date.now()-lastUp<300 && Math.hypot(e.clientX-lux,e.clientY-luy)<30){
+        holding=true; send({t:'down',b:'left'});
+      }
+    } else { maxN=Math.max(maxN,n); }
+    // touching the pad leaves the type field so the on-screen keyboard hides
+    if(document.activeElement&&document.activeElement.blur) document.activeElement.blur();
     e.preventDefault();
   });
   pad.addEventListener('pointermove',function(e){
-    if(!pts[e.pointerId]||!ready) { return; }
+    if(!pts[e.pointerId]||!ready) return;
     var d=avgMove(e);
     if(Math.abs(d.dx)>2||Math.abs(d.dy)>2) moved=true;
     if(n>=2){ if(d.dy) send({t:'scroll',y:Math.round(-d.dy*SCROLL)}); }
@@ -378,9 +387,10 @@ PAGE = r"""<!doctype html>
     if(pts[e.pointerId]){ delete pts[e.pointerId]; n=Math.max(0,n-1); }
     if(n===0){
       var quick=Date.now()-startT<300;
-      if(quick&&!moved){
+      if(holding){ send({t:'up',b:'left'}); holding=false; }
+      else if(quick&&!moved){
         if(maxN>=2) send({t:'click',b:'right'});
-        else if(maxN===1) send({t:'click',b:'left'});
+        else { send({t:'click',b:'left'}); lastUp=Date.now(); lux=sx; luy=sy; }
       }
       maxN=0;
     }
