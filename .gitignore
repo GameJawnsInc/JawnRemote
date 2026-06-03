@@ -2,6 +2,7 @@
 
 # Server (Python)
 server/pin.txt
+server/apps.json
 server/__pycache__/
 server/build/
 server/dist/
