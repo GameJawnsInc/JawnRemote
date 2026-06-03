@@ -136,7 +136,21 @@
       padding: 1rem 1.25rem; border-left: 2px solid var(--accent);
       background: rgba(79, 140, 255, 0.03);
     }
-    .feature .name { font-size: 0.95rem; color: var(--accent); letter-spacing: 0.05em; margin-bottom: 0.35rem; }
+    .feature .name { font-size: 0.95rem; color: var(--accent); letter-spacing: 0.05em; margin-bottom: 0.35rem;
+      display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+    .feature .clients { display: inline-flex; gap: 0.3rem; flex-shrink: 0; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 0.25em; font-size: 0.68rem;
+      letter-spacing: 0.06em; text-transform: uppercase; padding: 0.12em 0.45em;
+      border-radius: 3px; white-space: nowrap; line-height: 1.4;
+    }
+    .badge.app { color: var(--accent); border: 1px solid var(--accent-soft); background: rgba(79, 140, 255, 0.08); }
+    .badge.web { color: #3DDC84; border: 1px solid rgba(61, 220, 132, 0.35); background: rgba(61, 220, 132, 0.08); }
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 0.6rem 1.5rem;
+      margin: 0 0 1.5rem; font-size: 0.85rem; color: var(--ink);
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 0.4rem; }
     .feature .desc { font-size: 0.9rem; }
     .feature .desc code {
       font-family: var(--mono); background: rgba(79, 140, 255, 0.1);
@@ -247,61 +261,65 @@
 
     <section class="block">
       <h2>What it does</h2>
+      <p class="legend">
+        <span class="legend-item"><span class="badge app">📱 App</span> the Android app — every feature below.</span>
+        <span class="legend-item"><span class="badge web">🌐 Web</span> any device's browser — no install (trackpad &amp; typing).</span>
+      </p>
       <div class="features">
         <div class="feature">
-          <div class="name">Trackpad</div>
+          <div class="name"><span>Trackpad</span><span class="clients"><span class="badge app">📱 App</span><span class="badge web">🌐 Web</span></span></div>
           <div class="desc">Move, click, scroll, drag.</div>
         </div>
         <div class="feature">
-          <div class="name">Full keyboard</div>
+          <div class="name"><span>Full keyboard</span><span class="clients"><span class="badge app">📱 App</span><span class="badge web">🌐 Web</span></span></div>
           <div class="desc">Typing plus Ctrl/Alt/Win, F-keys &amp; shortcuts.</div>
         </div>
         <div class="feature">
-          <div class="name">Media &amp; volume</div>
+          <div class="name"><span>Media &amp; volume</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Play/pause, skip, and the volume rocker.</div>
         </div>
         <div class="feature">
-          <div class="name">Presentation</div>
+          <div class="name"><span>Presentation</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Next/prev slide, start, blackout.</div>
         </div>
         <div class="feature">
-          <div class="name">App launcher</div>
+          <div class="name"><span>App launcher</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Open the apps and sites you choose.</div>
         </div>
         <div class="feature">
-          <div class="name">File transfer</div>
+          <div class="name"><span>File transfer</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Send a file to the PC or receive one — both ways.</div>
         </div>
         <div class="feature">
-          <div class="name">Browser remote</div>
+          <div class="name"><span>Browser remote</span><span class="clients"><span class="badge web">🌐 Web</span></span></div>
           <div class="desc">Control the PC from any device's browser — no app to install.</div>
         </div>
         <div class="feature">
-          <div class="name">Clipboard sync</div>
+          <div class="name"><span>Clipboard sync</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Copy on one device, paste on the other.</div>
         </div>
         <div class="feature">
-          <div class="name">Power</div>
+          <div class="name"><span>Power</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Lock, sleep, restart, shut down.</div>
         </div>
         <div class="feature">
-          <div class="name">Wake-on-LAN</div>
+          <div class="name"><span>Wake-on-LAN</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Turn the PC on from your phone.</div>
         </div>
         <div class="feature">
-          <div class="name">Finds your PC</div>
+          <div class="name"><span>Finds your PC</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Auto-found on your Wi-Fi.</div>
         </div>
         <div class="feature">
-          <div class="name">Portrait or landscape</div>
+          <div class="name"><span>Portrait or landscape</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">Rotate however you hold it.</div>
         </div>
         <div class="feature">
-          <div class="name">Local &amp; private</div>
+          <div class="name"><span>Local &amp; private</span><span class="clients"><span class="badge app">📱 App</span><span class="badge web">🌐 Web</span></span></div>
           <div class="desc">No cloud, no sign-in, no ads.</div>
         </div>
         <div class="feature">
-          <div class="name">One-tap install</div>
+          <div class="name"><span>One-tap install</span><span class="clients"><span class="badge app">📱 App</span></span></div>
           <div class="desc">One installer, firewall included.</div>
         </div>
       </div>
