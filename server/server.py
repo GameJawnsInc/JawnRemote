@@ -213,9 +213,15 @@ class Handler(socketserver.StreamRequestHandler):
             return {"t": "apps", "apps": appstore.load_apps()}
         if t == "clipget":
             return {"t": "clip", "s": clip.get_text()}
+        if t == "displays":
+            try:
+                return {"t": "displays", "list": screen_win.list_displays()}
+            except Exception as e:
+                log(f"    displays error: {e!r}")
+                return {"t": "displays", "list": []}
         if t == "shot":
             try:
-                png, w, h = screen_win.capture_png()
+                png, w, h = screen_win.capture_png(display=msg.get("display"))
                 return {"t": "shot", "w": w, "h": h,
                         "img": base64.b64encode(png).decode("ascii")}
             except Exception as e:

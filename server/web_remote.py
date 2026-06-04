@@ -229,9 +229,16 @@ def _ws_loop(handler, log=print):
                     _ws_send(handler, {"t": "apps", "apps": apps_store.load_apps()})
                 except Exception as e:
                     log(f"    web getapps error: {e!r}")
+            elif t == "displays":
+                try:
+                    _ws_send(handler, {"t": "displays",
+                                       "list": screen_win.list_displays()})
+                except Exception as e:
+                    log(f"    web displays error: {e!r}")
+                    _ws_send(handler, {"t": "displays", "list": []})
             elif t == "shot":
                 try:
-                    png, w, h = screen_win.capture_png()
+                    png, w, h = screen_win.capture_png(display=msg.get("display"))
                     _ws_send(handler, {"t": "shot", "w": w, "h": h,
                                        "img": base64.b64encode(png).decode("ascii")})
                 except Exception as e:
@@ -334,6 +341,13 @@ PAGE = r"""<!doctype html>
     border-top:1px solid #ffffff14}
   #shotbar .btn{flex:1;padding:13px}
   #shotbar .btn.wide{flex:2}
+  #shotdisp{flex:none;display:flex;gap:6px;padding:8px;background:var(--bg);
+    overflow-x:auto;border-bottom:1px solid #ffffff14}
+  #shotdisp:empty{display:none}
+  #shotdisp .chip{flex:none;padding:8px 14px;border:none;border-radius:8px;
+    background:var(--card);color:var(--ink);font-size:13px;white-space:nowrap;
+    cursor:pointer}
+  #shotdisp .chip.on{background:var(--accent);color:#08101f;font-weight:600}
   .hidden{display:none!important}
 </style>
 </head>
@@ -453,6 +467,7 @@ PAGE = r"""<!doctype html>
   </nav>
 
   <div id="shot" class="hidden">
+    <div id="shotdisp"></div>
     <div id="shotstage">
       <img id="shotimg" alt="">
       <div id="shotmsg">Capturing…</div>
@@ -484,7 +499,8 @@ PAGE = r"""<!doctype html>
       var m; try{ m=JSON.parse(ev.data);}catch(e){return;}
       if(m.t==='welcome'){
         if(m.ok){ ready=true; login.classList.add('hidden');
-          dot.classList.add('on'); title.textContent=m.server||'Connected'; }
+          dot.classList.add('on'); title.textContent=m.server||'Connected';
+          send({t:'displays'}); }
         else { ready=false; login.classList.remove('hidden');
           msg.textContent = m.err==='locked'
             ? 'Too many tries — wait a minute.' : 'Wrong PIN.'; }
@@ -492,6 +508,8 @@ PAGE = r"""<!doctype html>
         document.getElementById('clipbox').value = m.s||'';
       } else if(m.t==='apps'){
         renderApps(m.apps||[]);
+      } else if(m.t==='displays'){
+        onDisplays(m.list||[]);
       } else if(m.t==='shot'){
         onShot(m);
       }
@@ -672,8 +690,10 @@ PAGE = r"""<!doctype html>
       simg=document.getElementById('shotimg'),
       shotmsg=document.getElementById('shotmsg'),
       shotStage=document.getElementById('shotstage'),
+      shotDisp=document.getElementById('shotdisp'),
       shotOpen=false, MAXZ=12;
   var sc=1, tx=0, ty=0, fit=1, nW=0, nH=0;
+  var shotDisplays=[], curDisplay=null;   // null = whole desktop; int = one monitor
   function sApply(){ simg.style.transform='translate('+tx+'px,'+ty+'px) scale('+sc+')'; }
   function sClamp(){
     var w=shotStage.clientWidth, h=shotStage.clientHeight, iw=nW*sc, ih=nH*sc;
@@ -690,11 +710,39 @@ PAGE = r"""<!doctype html>
     if(ns===sc) return;
     tx=cx-(cx-tx)*(ns/sc); ty=cy-(cy-ty)*(ns/sc); sc=ns; sClamp(); sApply();
   }
+  function onDisplays(list){
+    shotDisplays = list || [];
+    if(curDisplay===null && shotDisplays.length){
+      var p=0;
+      for(var i=0;i<shotDisplays.length;i++){ if(shotDisplays[i].primary){ p=i; break; } }
+      var d=shotDisplays[p];
+      curDisplay = (typeof d.index==='number') ? d.index : p;
+    }
+    if(shotOpen) renderDispChips();
+  }
+  function renderDispChips(){
+    shotDisp.innerHTML='';
+    if(shotDisplays.length<2) return;   // only offer a picker when there's a choice
+    shotDisplays.forEach(function(d,i){
+      var idx=(typeof d.index==='number')?d.index:i;
+      var b=document.createElement('button');
+      b.className='chip'+(idx===curDisplay?' on':'');
+      b.textContent='Display '+(i+1)+(d.primary?' ★':'');
+      b.addEventListener('click',function(){
+        curDisplay=idx; renderDispChips(); captureCurrent(); });
+      shotDisp.appendChild(b);
+    });
+  }
+  function captureCurrent(){
+    simg.style.visibility='hidden'; shotmsg.style.display='';
+    shotmsg.textContent='Capturing…';
+    send(curDisplay===null ? {t:'shot'} : {t:'shot',display:curDisplay});
+  }
   function openShot(){
     if(!ready) return;
     shotOpen=true; shotEl.classList.remove('hidden');
-    simg.style.visibility='hidden'; shotmsg.style.display='';
-    shotmsg.textContent='Capturing…'; send({t:'shot'});
+    if(!shotDisplays.length) send({t:'displays'});
+    renderDispChips(); captureCurrent();
   }
   function closeShot(){
     shotOpen=false; shotEl.classList.add('hidden');
@@ -713,7 +761,7 @@ PAGE = r"""<!doctype html>
   }
   document.getElementById('shotbtn').onclick=openShot;
   document.getElementById('shotclose').onclick=closeShot;
-  document.getElementById('shotref').onclick=openShot;
+  document.getElementById('shotref').onclick=captureCurrent;
   document.getElementById('shotin').onclick=function(){
     sZoom(shotStage.clientWidth/2,shotStage.clientHeight/2,1.6); };
   document.getElementById('shotout').onclick=function(){

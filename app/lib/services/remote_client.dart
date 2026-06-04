@@ -49,6 +49,9 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   /// In-flight Quick View screenshot request (one-shot request/response).
   Completer<Uint8List>? _shotPending;
 
+  /// In-flight monitor-list request.
+  Completer<List<Map<String, dynamic>>>? _displaysPending;
+
   // Reconnect backoff (ms) by attempt — the first retry is near-instant.
   static const List<int> _backoffMs = [200, 500, 1000, 2000, 3000, 5000];
   // Heartbeat: ping this often; declare the link dead after this much silence.
@@ -175,6 +178,16 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
               c.completeError(e);
             }
           }
+        }
+        break;
+      case 'displays':
+        final c = _displaysPending;
+        _displaysPending = null;
+        if (c != null && !c.isCompleted) {
+          final list = msg['list'];
+          c.complete(list is List
+              ? list.whereType<Map<String, dynamic>>().toList()
+              : const <Map<String, dynamic>>[]);
         }
         break;
       case 'fileack':
@@ -326,18 +339,38 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void requestClipboard() => _sendRaw({'t': 'clipget'});
   void ping() => _sendRaw({'t': 'ping'});
 
-  /// Ask the PC for a one-off screenshot. Resolves with PNG bytes, or errors on
-  /// timeout / capture failure. Nothing is stored or written to disk.
-  Future<Uint8List> requestShot() {
+  /// Ask the PC for a one-off screenshot. [display] is a monitor index from
+  /// [requestDisplays] (null = whole virtual desktop). Resolves with PNG bytes,
+  /// or errors on timeout / capture failure. Nothing is stored or saved.
+  Future<Uint8List> requestShot({int? display}) {
     final prev = _shotPending;
     if (prev != null && !prev.isCompleted) return prev.future; // coalesce
     final c = Completer<Uint8List>();
     _shotPending = c;
-    _sendRaw({'t': 'shot'});
+    _sendRaw(display == null
+        ? {'t': 'shot'}
+        : {'t': 'shot', 'display': display});
     Future.delayed(const Duration(seconds: 15), () {
       if (!c.isCompleted) {
         if (identical(_shotPending, c)) _shotPending = null;
         c.completeError('Timed out waiting for the screenshot.');
+      }
+    });
+    return c.future;
+  }
+
+  /// Ask the PC which monitors it has -> [{index,x,y,w,h,primary,name}, ...].
+  /// Resolves empty on timeout (caller falls back to the whole desktop).
+  Future<List<Map<String, dynamic>>> requestDisplays() {
+    final prev = _displaysPending;
+    if (prev != null && !prev.isCompleted) return prev.future;
+    final c = Completer<List<Map<String, dynamic>>>();
+    _displaysPending = c;
+    _sendRaw({'t': 'displays'});
+    Future.delayed(const Duration(seconds: 8), () {
+      if (!c.isCompleted) {
+        if (identical(_displaysPending, c)) _displaysPending = null;
+        c.complete(const <Map<String, dynamic>>[]);
       }
     });
     return c.future;

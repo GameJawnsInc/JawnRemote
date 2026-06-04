@@ -87,10 +87,18 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
+    List<Map<String, dynamic>> displays = const [];
+    int display = 0;
     Uint8List? png;
     String? err;
     try {
-      png = await client.requestShot();
+      displays = await client.requestDisplays();
+      if (displays.isNotEmpty) {
+        final p = displays.firstWhere((d) => d['primary'] == true,
+            orElse: () => displays.first);
+        display = (p['index'] is int) ? p['index'] as int : displays.indexOf(p);
+      }
+      png = await client.requestShot(display: displays.isEmpty ? null : display);
     } catch (e) {
       err = e.toString();
     }
@@ -101,9 +109,12 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
       return;
     }
     final bytes = png;
+    final disp = displays;
+    final initial = display;
     nav.push(MaterialPageRoute(
       fullscreenDialog: true,
-      builder: (_) => _ScreenViewer(client: client, png: bytes),
+      builder: (_) => _ScreenViewer(
+          client: client, png: bytes, displays: disp, display: initial),
     ));
   }
 
@@ -240,7 +251,14 @@ class _ActionCard extends StatelessWidget {
 class _ScreenViewer extends StatefulWidget {
   final RemoteClient client;
   final Uint8List png;
-  const _ScreenViewer({required this.client, required this.png});
+  final List<Map<String, dynamic>> displays;
+  final int display;
+  const _ScreenViewer({
+    required this.client,
+    required this.png,
+    required this.displays,
+    required this.display,
+  });
 
   @override
   State<_ScreenViewer> createState() => _ScreenViewerState();
@@ -248,14 +266,25 @@ class _ScreenViewer extends StatefulWidget {
 
 class _ScreenViewerState extends State<_ScreenViewer> {
   late Uint8List _png = widget.png;
+  late int _display = widget.display;
   bool _busy = false;
 
-  Future<void> _refresh() async {
+  int _idxOf(int i) {
+    final v = widget.displays[i]['index'];
+    return v is int ? v : i;
+  }
+
+  Future<void> _capture(int? display) async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final p = await widget.client.requestShot();
-      if (mounted) setState(() => _png = p);
+      final p = await widget.client.requestShot(display: display);
+      if (mounted) {
+        setState(() {
+          _png = p;
+          if (display != null) _display = display;
+        });
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -280,7 +309,7 @@ class _ScreenViewerState extends State<_ScreenViewer> {
         actions: [
           IconButton(
             tooltip: 'Refresh',
-            onPressed: _busy ? null : _refresh,
+            onPressed: _busy ? null : () => _capture(_display),
             icon: _busy
                 ? const SizedBox(
                     width: 18,
@@ -290,17 +319,52 @@ class _ScreenViewerState extends State<_ScreenViewer> {
           ),
         ],
       ),
-      body: InteractiveViewer(
-        minScale: 1,
-        maxScale: 10,
-        child: SizedBox.expand(
-          child: Image.memory(
-            _png,
-            fit: BoxFit.contain,
-            gaplessPlayback: true,
-            filterQuality: FilterQuality.medium,
+      body: Column(
+        children: [
+          if (widget.displays.length > 1)
+            Container(
+              color: const Color(0xFF0E1116),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (int i = 0; i < widget.displays.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text('Display ${i + 1}'
+                              '${widget.displays[i]['primary'] == true ? ' ★' : ''}'),
+                          selected: _idxOf(i) == _display,
+                          onSelected:
+                              _busy ? null : (_) => _capture(_idxOf(i)),
+                          selectedColor: const Color(0xFF4F8CFF),
+                          backgroundColor: const Color(0xFF161C24),
+                          labelStyle: TextStyle(
+                              color: _idxOf(i) == _display
+                                  ? const Color(0xFF08101F)
+                                  : Colors.white),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          Expanded(
+            child: InteractiveViewer(
+              minScale: 1,
+              maxScale: 10,
+              child: SizedBox.expand(
+                child: Image.memory(
+                  _png,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                  filterQuality: FilterQuality.medium,
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
