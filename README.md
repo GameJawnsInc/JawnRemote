@@ -11,7 +11,7 @@ profile (the exact thing that breaks UnifiedRemote on Windows 11).
 
 Two ways to connect:
 
-- **Android app** — the full-featured client (trackpad gestures, gyro air-mouse,
+- **Android app** — the full-featured client (trackpad gestures, custom macros,
   file transfer, Wake-on-LAN, auto-discovery).
 - **Browser remote** — open `http://<pc-ip>:8770/` on *any* device on the Wi-Fi.
   Nothing to install. Scan the QR code in the server window to connect in one tap.
@@ -30,7 +30,7 @@ Two ways to connect:
 | Clipboard sync (push/pull text between phone and PC) | ✅ | ✅ |
 | **Quick View** — pull a screenshot of the PC, pinch-to-zoom, pick a monitor | ✅ | ✅ |
 | Power (lock, sleep, restart, shut down, log off) | ✅ | ✅ |
-| Gyro **air-mouse** — point the phone like a laser | ✅ | — |
+| Custom macros — buttons that fire keystrokes or launch apps | ✅ | — |
 | File transfer (phone ↔ PC) | ✅ | — |
 | Wake-on-LAN — turn the PC on from your phone | ✅ | — |
 | Auto-discovery (finds your PC on the Wi-Fi) | ✅ | — |
