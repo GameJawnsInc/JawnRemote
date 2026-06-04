@@ -16,6 +16,7 @@ import struct
 
 import apps_store
 import clipboard_win as clip
+import screen_win
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -228,6 +229,14 @@ def _ws_loop(handler, log=print):
                     _ws_send(handler, {"t": "apps", "apps": apps_store.load_apps()})
                 except Exception as e:
                     log(f"    web getapps error: {e!r}")
+            elif t == "shot":
+                try:
+                    png, w, h = screen_win.capture_png()
+                    _ws_send(handler, {"t": "shot", "w": w, "h": h,
+                                       "img": base64.b64encode(png).decode("ascii")})
+                except Exception as e:
+                    log(f"    web shot error: {e!r}")
+                    _ws_send(handler, {"t": "shot", "err": True})
             elif t in SAFE_INPUT:
                 try:
                     handler.do_input(t, msg)
@@ -315,6 +324,16 @@ PAGE = r"""<!doctype html>
   #go{padding:14px 28px;border:none;border-radius:12px;background:var(--accent);
     color:#08101f;font-weight:700;font-size:16px;cursor:pointer}
   #msg{color:var(--amber);min-height:1.2em}
+  #shot{position:fixed;inset:0;z-index:20;background:#000;display:flex;flex-direction:column}
+  #shotstage{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none}
+  #shotimg{position:absolute;left:0;top:0;transform-origin:0 0;
+    will-change:transform;user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+  #shotmsg{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);
+    text-align:center;color:var(--muted)}
+  #shotbar{flex:none;display:flex;gap:8px;padding:10px;background:var(--bg);
+    border-top:1px solid #ffffff14}
+  #shotbar .btn{flex:1;padding:13px}
+  #shotbar .btn.wide{flex:2}
   .hidden{display:none!important}
 </style>
 </head>
@@ -383,6 +402,8 @@ PAGE = r"""<!doctype html>
         <button class="btn" id="clipsend">Send to PC</button>
         <button class="btn" id="clipgetb">Get from PC</button>
       </div>
+      <div class="label">Screen</div>
+      <button class="btn" id="shotbtn">Quick View</button>
     </section>
 
     <section class="panel" data-panel="media">
@@ -431,6 +452,19 @@ PAGE = r"""<!doctype html>
     <button class="tab" data-tab="apps">Apps</button>
   </nav>
 
+  <div id="shot" class="hidden">
+    <div id="shotstage">
+      <img id="shotimg" alt="">
+      <div id="shotmsg">Capturing…</div>
+    </div>
+    <div id="shotbar">
+      <button class="btn" id="shotout">&minus;</button>
+      <button class="btn" id="shotin">+</button>
+      <button class="btn" id="shotref">Refresh</button>
+      <button class="btn wide" id="shotclose">Close</button>
+    </div>
+  </div>
+
 <script>
 (function(){
   var MOVE=1.5, SCROLL=3;            // sensitivity
@@ -458,6 +492,8 @@ PAGE = r"""<!doctype html>
         document.getElementById('clipbox').value = m.s||'';
       } else if(m.t==='apps'){
         renderApps(m.apps||[]);
+      } else if(m.t==='shot'){
+        onShot(m);
       }
     };
     ws.onclose=function(){ ready=false; dot.classList.remove('on');
@@ -628,6 +664,102 @@ PAGE = r"""<!doctype html>
       g.appendChild(b);
     });
   }
+
+  // ---- quick view: a one-off screenshot you can pinch/drag to zoom ----
+  // Nothing is saved anywhere -- the PNG arrives over the socket, lives in an
+  // <img>, and is dropped the moment you close the viewer.
+  var shotEl=document.getElementById('shot'),
+      simg=document.getElementById('shotimg'),
+      shotmsg=document.getElementById('shotmsg'),
+      shotStage=document.getElementById('shotstage'),
+      shotOpen=false, MAXZ=12;
+  var sc=1, tx=0, ty=0, fit=1, nW=0, nH=0;
+  function sApply(){ simg.style.transform='translate('+tx+'px,'+ty+'px) scale('+sc+')'; }
+  function sClamp(){
+    var w=shotStage.clientWidth, h=shotStage.clientHeight, iw=nW*sc, ih=nH*sc;
+    tx = iw<=w ? (w-iw)/2 : Math.min(0,Math.max(w-iw,tx));
+    ty = ih<=h ? (h-ih)/2 : Math.min(0,Math.max(h-ih,ty));
+  }
+  function sFit(){
+    var w=shotStage.clientWidth, h=shotStage.clientHeight;
+    if(!nW||!nH||!w||!h) return;
+    fit=Math.min(w/nW,h/nH); sc=fit; tx=(w-nW*sc)/2; ty=(h-nH*sc)/2; sApply();
+  }
+  function sZoom(cx,cy,f){
+    var ns=Math.min(fit*MAXZ,Math.max(fit,sc*f));
+    if(ns===sc) return;
+    tx=cx-(cx-tx)*(ns/sc); ty=cy-(cy-ty)*(ns/sc); sc=ns; sClamp(); sApply();
+  }
+  function openShot(){
+    if(!ready) return;
+    shotOpen=true; shotEl.classList.remove('hidden');
+    simg.style.visibility='hidden'; shotmsg.style.display='';
+    shotmsg.textContent='Capturing…'; send({t:'shot'});
+  }
+  function closeShot(){
+    shotOpen=false; shotEl.classList.add('hidden');
+    simg.removeAttribute('src'); nW=nH=0;     // drop the bytes; nothing kept
+  }
+  function onShot(m){
+    if(!shotOpen) return;
+    if(m.err){ shotmsg.style.display='';
+      shotmsg.textContent='Couldn’t capture the screen.'; return; }
+    simg.onload=function(){
+      nW=simg.naturalWidth; nH=simg.naturalHeight;
+      simg.style.width=nW+'px'; simg.style.height=nH+'px';
+      sFit(); simg.style.visibility='visible'; shotmsg.style.display='none';
+    };
+    simg.src='data:image/png;base64,'+m.img;
+  }
+  document.getElementById('shotbtn').onclick=openShot;
+  document.getElementById('shotclose').onclick=closeShot;
+  document.getElementById('shotref').onclick=openShot;
+  document.getElementById('shotin').onclick=function(){
+    sZoom(shotStage.clientWidth/2,shotStage.clientHeight/2,1.6); };
+  document.getElementById('shotout').onclick=function(){
+    sZoom(shotStage.clientWidth/2,shotStage.clientHeight/2,1/1.6); };
+
+  // pan (1 finger) + pinch (2 fingers) + double-tap to toggle zoom
+  var sp={}, sn=0, sDist=0, lastTap=0, sMoved=false;
+  function spList(){ return Object.keys(sp).map(function(k){return sp[k];}); }
+  function rectXY(e){ var r=shotStage.getBoundingClientRect();
+    return {x:e.clientX-r.left,y:e.clientY-r.top}; }
+  shotStage.addEventListener('pointerdown',function(e){
+    shotStage.setPointerCapture(e.pointerId);
+    var p=rectXY(e); sp[e.pointerId]={x:p.x,y:p.y}; sn++; sMoved=false;
+    if(sn===2){ var a=spList(); sDist=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y); }
+    e.preventDefault();
+  });
+  shotStage.addEventListener('pointermove',function(e){
+    var p=sp[e.pointerId]; if(!p) return; var q=rectXY(e);
+    if(sn>=2){
+      p.x=q.x; p.y=q.y;
+      var a=spList(), d=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y),
+          mx=(a[0].x+a[1].x)/2, my=(a[0].y+a[1].y)/2;
+      if(sDist>0) sZoom(mx,my,d/sDist);
+      sDist=d; sMoved=true;
+    } else {
+      var dx=q.x-p.x, dy=q.y-p.y; p.x=q.x; p.y=q.y;
+      if(Math.abs(dx)>2||Math.abs(dy)>2) sMoved=true;
+      tx+=dx; ty+=dy; sClamp(); sApply();
+    }
+    e.preventDefault();
+  });
+  function sUp(e){
+    if(sp[e.pointerId]){ delete sp[e.pointerId]; sn=Math.max(0,sn-1); }
+    if(sn<2) sDist=0;
+    if(sn===0 && !sMoved){
+      var now=Date.now(), p=rectXY(e);
+      if(now-lastTap<300){ if(sc>fit*1.5) sFit(); else sZoom(p.x,p.y,4); lastTap=0; }
+      else lastTap=now;
+    }
+    e.preventDefault();
+  }
+  shotStage.addEventListener('pointerup',sUp);
+  shotStage.addEventListener('pointercancel',sUp);
+  window.addEventListener('resize',function(){ if(shotOpen&&nW) sFit(); });
+  window.addEventListener('keydown',function(e){
+    if(e.key==='Escape'&&shotOpen) closeShot(); });
 
   // ---- scan-to-connect: the PIN may arrive in the URL fragment (#1234) ----
   // Fragments are never sent to the server; strip it from history immediately
