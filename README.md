@@ -43,15 +43,18 @@ they're streamed once and dropped when you close the viewer.
 
 ## Install (end users)
 
-**PC server (Windows):** download and run **`JawnRemote-Server-Setup.exe`** from
-[jawnston.com/jawnremote](https://jawnston.com/jawnremote/). One UAC prompt, then
-Next → Install → Finish. The installer drops a single self-contained
-`JawnRemoteServer.exe` (Python bundled in — no install needed) and opens the
-firewall for TCP+UDP `8770`, scoped to `localsubnet` so the port is invisible to
-the internet. A small window shows your PC's address, the PIN, and live status.
+Grab the latest **`JawnRemote-Server-Setup.exe`** (PC) and **`JawnRemote.apk`**
+(Android) from the [**Releases**](https://github.com/GameJawnsInc/JawnRemote/releases/latest)
+page — or from [jawnston.com/jawnremote](https://jawnston.com/jawnremote/).
 
-**Phone:** install the Android app from [jawnston.com/jawnremote](https://jawnston.com/jawnremote/),
-make sure it's on the same Wi-Fi, tap your PC under **Discovered**, and enter the PIN.
+**PC server (Windows):** run the installer. One UAC prompt, then Next → Install →
+Finish. It drops a single self-contained `JawnRemoteServer.exe` (Python bundled in
+— no install needed) and opens the firewall for TCP+UDP `8770`, scoped to
+`localsubnet` so the port is invisible to the internet. A small window shows your
+PC's address, the PIN, and live status.
+
+**Phone:** install the APK (enable "install unknown apps" when prompted), make sure
+it's on the same Wi-Fi, tap your PC under **Discovered**, and enter the PIN.
 
 **Browser:** open `http://<pc-ip>:8770/` on any device on the network, or scan the QR
 code shown in the server window. Enter the PIN and you're in.
