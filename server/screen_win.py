@@ -1,8 +1,9 @@
 """
 On-demand screen capture for the browser remote's "Quick View".
 
-Grabs the whole virtual desktop, downscales it inside GDI (fast, native), and
-returns a PNG built with the standard library only -- ctypes for the capture,
+Grabs the whole virtual desktop (or a single chosen monitor), downscales it
+inside GDI (fast, native), and returns a PNG built with the stdlib only -- ctypes
+for the capture,
 zlib for the compression. Nothing is ever written to disk: the bytes are handed
 straight to the WebSocket and forgotten.
 
@@ -53,6 +54,34 @@ class BITMAPINFOHEADER(ctypes.Structure):
     )
 
 
+CCHDEVICENAME = 32
+MONITORINFOF_PRIMARY = 1
+
+
+class RECT(ctypes.Structure):
+    _fields_ = (
+        ("left", wintypes.LONG),
+        ("top", wintypes.LONG),
+        ("right", wintypes.LONG),
+        ("bottom", wintypes.LONG),
+    )
+
+
+class MONITORINFOEX(ctypes.Structure):
+    _fields_ = (
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", RECT),
+        ("rcWork", RECT),
+        ("dwFlags", wintypes.DWORD),
+        ("szDevice", wintypes.WCHAR * CCHDEVICENAME),
+    )
+
+
+# BOOL CALLBACK MonitorEnumProc(HMONITOR, HDC, LPRECT, LPARAM)
+MONITORENUMPROC = ctypes.WINFUNCTYPE(
+    ctypes.c_int, HANDLE, HANDLE, ctypes.POINTER(RECT), ctypes.c_void_p)
+
+
 # Every call that takes or returns a handle MUST be typed, or ctypes defaults to
 # c_int and silently truncates pointers on 64-bit Python.
 user32.GetDC.argtypes = (HANDLE,)
@@ -88,6 +117,52 @@ gdi32.GetDIBits.argtypes = (
 )
 gdi32.GetDIBits.restype = ctypes.c_int
 
+user32.EnumDisplayMonitors.argtypes = (
+    HANDLE, ctypes.c_void_p, MONITORENUMPROC, ctypes.c_void_p)
+user32.EnumDisplayMonitors.restype = ctypes.c_int
+user32.GetMonitorInfoW.argtypes = (HANDLE, ctypes.c_void_p)
+user32.GetMonitorInfoW.restype = ctypes.c_int
+
+
+def list_displays():
+    """Enumerate monitors -> [{index,x,y,w,h,primary,name}, ...].
+
+    Order is EnumDisplayMonitors order (stable within a session). Coordinates are
+    in the same virtual-screen space BitBlt uses, so they feed straight into a
+    per-monitor capture.
+    """
+    out = []
+
+    def _cb(hmon, hdc, lprc, data):
+        mi = MONITORINFOEX()
+        mi.cbSize = ctypes.sizeof(MONITORINFOEX)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            r = mi.rcMonitor
+            out.append({
+                "index": len(out),
+                "x": r.left, "y": r.top,
+                "w": r.right - r.left, "h": r.bottom - r.top,
+                "primary": bool(mi.dwFlags & MONITORINFOF_PRIMARY),
+                "name": mi.szDevice,
+            })
+        return 1
+
+    user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(_cb), 0)
+    return out
+
+
+def _virtual_bounds():
+    """(x, y, w, h) of the whole virtual desktop (all monitors)."""
+    sx = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+    sy = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+    sw = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+    sh = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+    if sw <= 0 or sh <= 0:                 # multi-monitor metrics unavailable
+        sx = sy = 0
+        sw = user32.GetSystemMetrics(SM_CXSCREEN)
+        sh = user32.GetSystemMetrics(SM_CYSCREEN)
+    return sx, sy, sw, sh
+
 
 def _png(rgb, w, h):
     """Encode contiguous RGB bytes as a PNG (8-bit, color type 2). Stdlib only."""
@@ -109,16 +184,23 @@ def _png(rgb, w, h):
             chunk(b"IEND", b""))
 
 
-def capture_png(max_dim=MAX_DIM):
-    """Capture the desktop and return (png_bytes, width, height)."""
-    sx = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
-    sy = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
-    sw = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
-    sh = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
-    if sw <= 0 or sh <= 0:                 # multi-monitor metrics unavailable
-        sx = sy = 0
-        sw = user32.GetSystemMetrics(SM_CXSCREEN)
-        sh = user32.GetSystemMetrics(SM_CYSCREEN)
+def capture_png(display=None, max_dim=MAX_DIM):
+    """Capture the desktop and return (png_bytes, width, height).
+
+    display=None captures the whole virtual desktop (all monitors). An int index
+    captures just that monitor from list_displays() -- so a single screen gets
+    the full max_dim budget instead of sharing it across both. An out-of-range
+    index falls back to the whole desktop.
+    """
+    sx = sy = sw = sh = 0
+    if display is not None:
+        try:
+            d = list_displays()[int(display)]
+            sx, sy, sw, sh = d["x"], d["y"], d["w"], d["h"]
+        except (ValueError, TypeError, IndexError):
+            sw = sh = 0
+    if sw <= 0 or sh <= 0:
+        sx, sy, sw, sh = _virtual_bounds()
     if sw <= 0 or sh <= 0:
         raise OSError("could not read screen size")
 
@@ -167,6 +249,13 @@ def capture_png(max_dim=MAX_DIM):
 
 
 if __name__ == "__main__":
-    png, w, h = capture_png()
     sig = bytes([0x89]) + b"PNG\r\n" + bytes([0x1A, 0x0A])
-    print(f"captured {w}x{h}, png {len(png)} bytes, sig ok = {png[:8] == sig}")
+    mons = list_displays()
+    print(f"displays: {len(mons)}")
+    for d in mons:
+        print(f"  [{d['index']}] {d['w']}x{d['h']} @ ({d['x']},{d['y']})"
+              f"{' PRIMARY' if d['primary'] else ''}  {d['name']}")
+    png, w, h = capture_png(display=0) if mons else capture_png()
+    print(f"display 0 -> {w}x{h}, png {len(png)} bytes, sig ok = {png[:8] == sig}")
+    png, w, h = capture_png()
+    print(f"all       -> {w}x{h}, png {len(png)} bytes, sig ok = {png[:8] == sig}")
