@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
 
 enum ConnState { disconnected, connecting, connected, authFailed, error }
@@ -44,6 +45,9 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _probeTimer; // handshake watchdog / app-resume probe
   DateTime _lastInbound = DateTime.fromMillisecondsSinceEpoch(0);
   final StringBuffer _buf = StringBuffer();
+
+  /// In-flight Quick View screenshot request (one-shot request/response).
+  Completer<Uint8List>? _shotPending;
 
   // Reconnect backoff (ms) by attempt — the first retry is near-instant.
   static const List<int> _backoffMs = [200, 500, 1000, 2000, 3000, 5000];
@@ -157,6 +161,21 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
       case 'clip':
         pcClipboard = (msg['s'] ?? '').toString();
         notifyListeners();
+        break;
+      case 'shot':
+        final c = _shotPending;
+        _shotPending = null;
+        if (c != null && !c.isCompleted) {
+          if (msg['err'] == true) {
+            c.completeError('The PC could not capture the screen.');
+          } else {
+            try {
+              c.complete(base64Decode((msg['img'] ?? '').toString()));
+            } catch (e) {
+              c.completeError(e);
+            }
+          }
+        }
         break;
       case 'fileack':
       case 'filedone':
@@ -306,6 +325,23 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void sendClipboard(String text) => _sendRaw({'t': 'clipset', 's': text});
   void requestClipboard() => _sendRaw({'t': 'clipget'});
   void ping() => _sendRaw({'t': 'ping'});
+
+  /// Ask the PC for a one-off screenshot. Resolves with PNG bytes, or errors on
+  /// timeout / capture failure. Nothing is stored or written to disk.
+  Future<Uint8List> requestShot() {
+    final prev = _shotPending;
+    if (prev != null && !prev.isCompleted) return prev.future; // coalesce
+    final c = Completer<Uint8List>();
+    _shotPending = c;
+    _sendRaw({'t': 'shot'});
+    Future.delayed(const Duration(seconds: 15), () {
+      if (!c.isCompleted) {
+        if (identical(_shotPending, c)) _shotPending = null;
+        c.completeError('Timed out waiting for the screenshot.');
+      }
+    });
+    return c.future;
+  }
 
   // ---- file transfer (chunked; driven by FileTransfer) ----
   void fileBegin(String id, String name, int size) =>
