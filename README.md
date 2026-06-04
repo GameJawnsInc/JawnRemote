@@ -1,224 +1,165 @@
 # JawnRemote
 
-Use your phone as a **mouse and keyboard** for a Windows PC over your local Wi-Fi —
-a modern replacement for UnifiedRemote's basic input function, built to be shipped
-on the Play Store (and later the App Store).
+Turn your phone — or any device with a web browser — into a **mouse, keyboard, and
+remote control** for a Windows PC over your local Wi-Fi.
 
-Two parts:
+**Free. No ads, no accounts, no cloud.** Everything stays on your network: the phone
+talks straight to a tiny server on your PC, PIN-protected, and nothing ever leaves
+your LAN. It's the firewall-friendly replacement for UnifiedRemote's basic input —
+the open port is scoped to your own subnet, so it works even on a "Public" Wi-Fi
+profile (the exact thing that breaks UnifiedRemote on Windows 11).
 
-| Part | Folder | Tech | Role |
-|------|--------|------|------|
-| **PC server** | [`server/`](server/) | Python 3 (zero deps) | Receives input over the network and injects it via the Win32 `SendInput` API |
-| **Phone app** | [`app/`](app/) | Flutter (Dart) | Trackpad + keyboard UI; talks to the server over TCP |
+Two ways to connect:
 
-The app and server speak a tiny newline-delimited JSON protocol over TCP, with a
-PIN handshake for security and UDP broadcast for auto-discovery.
-
----
-
-## Quick start (testing on your own network)
-
-### 1. Start the PC server
-```
-cd server
-py server.py
-```
-It prints a banner like:
-```
-  JawnRemote server  --  'JawnPC'  is running
-  In the phone app, connect to one of these addresses:
-      10.0.0.210 : 8770
-  PIN:  0957
-```
-
-### 2. Open the firewall (once, admin)
-Windows blocks incoming connections by default — **this is why UnifiedRemote stopped
-working on Win11** (your Wi-Fi is set to `Public`). Double-click
-[`server/setup_firewall_ADMIN.bat`](server/setup_firewall_ADMIN.bat) (it self-elevates),
-or run in an **admin** PowerShell:
-```powershell
-New-NetFirewallRule -DisplayName "JawnRemote" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8770 -Profile Any
-New-NetFirewallRule -DisplayName "JawnRemote (discovery)" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 8770 -Profile Any
-```
-
-### 3. Connect from the phone
-- Make sure the phone is on the **same Wi-Fi**.
-- Open the app. Your PC should appear under **Discovered**; tap it and enter the PIN.
-- If discovery doesn't find it, tap **Add PC** and type the IP + PIN shown in the
-  server window.
+- **Android app** — the full-featured client (trackpad gestures, gyro air-mouse,
+  file transfer, Wake-on-LAN, auto-discovery).
+- **Browser remote** — open `http://<pc-ip>:8770/` on *any* device on the Wi-Fi.
+  Nothing to install. Scan the QR code in the server window to connect in one tap.
 
 ---
 
-## PC server details
+## Features
 
-- **Requirements:** Windows + Python 3.8+. No `pip install` needed.
-- **PIN:** auto-generated and saved in `server/pin.txt`. Override with `--pin 1234`,
-  or disable auth for local testing with `--no-auth`.
-- **Port:** `8770` by default (`--port`).
-- Run `py server/test_client.py` (with the server running) to self-test input injection.
+| Feature | App | Browser |
+|---|:---:|:---:|
+| Trackpad (move, tap, right/middle-click, scroll, drag-select) | ✅ | ✅ |
+| Full keyboard — typing, shortcuts (Ctrl+C/V…), F-keys, modifiers | ✅ | ✅ |
+| Media & volume keys | ✅ | ✅ |
+| Presentation controls (start, next/prev, black, end) | ✅ | ✅ |
+| App launcher (your own quick-launch tiles) | ✅ | ✅ |
+| Clipboard sync (push/pull text between phone and PC) | ✅ | ✅ |
+| **Quick View** — pull a screenshot of the PC, pinch-to-zoom, pick a monitor | ✅ | ✅ |
+| Power (lock, sleep, restart, shut down, log off) | ✅ | ✅ |
+| Gyro **air-mouse** — point the phone like a laser | ✅ | — |
+| File transfer (phone ↔ PC) | ✅ | — |
+| Wake-on-LAN — turn the PC on from your phone | ✅ | — |
+| Auto-discovery (finds your PC on the Wi-Fi) | ✅ | — |
+| Browser client — zero install, QR scan-to-connect | — | ✅ |
 
-### End-user install (the easy path — no Python, no console)
-Ship end users **`JawnRemote-Server-Setup.exe`**: they double-click it, click **Yes** on
-one UAC prompt, then Next → Install → Finish. The installer:
-- drops a single ~12 MB `JawnRemoteServer.exe` into Program Files (Python bundled in),
-- **opens the firewall on all network profiles** (TCP+UDP 8770) — so it works even on a
-  "Public" network, the exact thing that breaks UnifiedRemote,
-- adds a Start Menu (and optional desktop) shortcut, then launches the app.
+Nothing is stored in the cloud; Quick View screenshots are never written to disk —
+they're streamed once and dropped when you close the viewer.
 
-The app is a small window showing the PC's address, the PIN, live connection status, and
-a "Start automatically when I sign in" toggle. No console, nothing to configure.
+---
 
-### Building the server .exe + installer (developer)
+## Install (end users)
+
+**PC server (Windows):** download and run **`JawnRemote-Server-Setup.exe`** from
+[jawnston.com/jawnremote](https://jawnston.com/jawnremote/). One UAC prompt, then
+Next → Install → Finish. The installer drops a single self-contained
+`JawnRemoteServer.exe` (Python bundled in — no install needed) and opens the
+firewall for TCP+UDP `8770`, scoped to `localsubnet` so the port is invisible to
+the internet. A small window shows your PC's address, the PIN, and live status.
+
+**Phone:** install the Android app from [jawnston.com/jawnremote](https://jawnston.com/jawnremote/),
+make sure it's on the same Wi-Fi, tap your PC under **Discovered**, and enter the PIN.
+
+**Browser:** open `http://<pc-ip>:8770/` on any device on the network, or scan the QR
+code shown in the server window. Enter the PIN and you're in.
+
+---
+
+## Privacy & security
+
+- **Local-only.** The phone/browser connects directly to your PC over the LAN. There
+  is no cloud service, no account, no telemetry. JawnRemote never phones home.
+- **PIN handshake** on every connection, with a brute-force lockout after repeated
+  bad PINs.
+- **Firewall scoped to `localsubnet`** — the port is reachable from your own network
+  only, not the internet.
+- **Open source.** The whole thing is in this repo — read it, audit it, build it
+  yourself. The PC server is ~zero-dependency Python standard library; you can run it
+  straight from source with `py server/server.py` if you'd rather not run the `.exe`.
+- **SmartScreen note:** the installer isn't code-signed yet, so Windows may show
+  "Windows protected your PC / unknown publisher." Click **More info → Run anyway**,
+  or build it yourself from source (below).
+
+---
+
+## How it works
+
+| Part | Folder | Tech |
+|---|---|---|
+| PC server | [`server/`](server/) | Python 3 (standard library only) — injects input via the Win32 `SendInput` API; captures the screen via GDI; serves the browser client over a hand-rolled HTTP/WebSocket on the same port |
+| Phone app | [`app/`](app/) | Flutter (Dart) — gesture trackpad, keyboard, and the rest |
+
+The app speaks a tiny newline-delimited JSON protocol over TCP (PIN handshake + UDP
+broadcast for auto-discovery). The browser speaks the **same** JSON schema over a
+WebSocket multiplexed onto the same port, so both clients share one server with one
+firewall rule.
+
+---
+
+## Build from source
+
+### PC server (.exe + installer)
 ```
 pip install pyinstaller
 cd server
-py -m PyInstaller --noconfirm --onefile --windowed --name JawnRemoteServer ^
-   --icon JawnRemoteServer.ico --add-data "JawnRemoteServer.ico;." server_gui.py
+py -m PyInstaller --noconfirm JawnRemoteServer.spec
 cd ..
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\JawnRemote.iss
 ```
-Output: `installer\Output\JawnRemote-Server-Setup.exe`. See [HOSTING.md](HOSTING.md) for
-free hosting + the code-signing note (removes the SmartScreen "unknown publisher" warning).
+Output: `installer\Output\JawnRemote-Server-Setup.exe`. For development, run the
+console server directly — no build needed:
+```
+cd server
+py server.py            # --pin 1234 to set a PIN, --no-auth to disable auth, --port to change port
+```
 
-`server.py` (console) and `server_gui.py` (window) share the same core — use the console
-one for development: `py server.py`.
-
----
-
-## Phone app details
-
-- **Framework:** Flutter 3.44+. **Package id:** `com.jawnstoninc.jawnremote`.
-  **Display name:** JawnRemote.
-- **Source layout:**
-  ```
-  app/lib/
-    main.dart                 app entry + theme
-    app_scope.dart            shared services (InheritedWidget)
-    models/host.dart          saved/discovered PC
-    services/
-      remote_client.dart      TCP client, protocol, auto-reconnect
-      discovery.dart          UDP discovery
-      settings.dart           prefs + saved hosts
-    screens/
-      connect_screen.dart     pick / add a PC
-      remote_screen.dart      status + trackpad + buttons + keyboard
-      settings_screen.dart    sensitivity, scroll, etc.
-    widgets/
-      trackpad.dart           gesture engine
-      keyboard_bar.dart       typing + special keys + modifiers
-      air_mouse_pad.dart      gyro "air mouse" — point the phone like a laser
-  ```
-
-### Gestures
-| Gesture | Action |
-|---------|--------|
-| One-finger drag | Move cursor |
-| One-finger tap | Left click |
-| Two-finger tap | Right click |
-| Three-finger tap | Middle click |
-| Two-finger drag | Scroll |
-| Double-tap then drag | Hold left button & drag (select) |
-| Air-mouse mode (3D toggle) | Hold to point the phone like a laser — gyroscope drives the cursor |
-
-### Build & run (debug)
+### Android app
 ```
 cd app
-flutter run                 # on a connected device/emulator
-flutter build apk --debug   # produces build/app/outputs/flutter-apk/app-debug.apk
+flutter run                  # on a connected device/emulator
+flutter build apk --release  # build/app/outputs/flutter-apk/app-release.apk
 ```
-Sideload the debug APK to a phone with `adb install -r app-debug.apk` (or just copy it
-over and tap it, enabling "install unknown apps").
+Release builds are signed with a local keystore referenced by
+`app/android/key.properties` (git-ignored; create your own with `keytool`, e.g.
+`storeFile=%USERPROFILE%/jawnremote-release.jks`). Debug builds need no signing.
 
 ---
 
-## Monetization (free + "Remove ads")
-Free download with a banner ad; a **$1.99 one-time in-app purchase** (`remove_ads`) hides
-ads permanently. Ads appear only on the connect/settings screens — **never the trackpad**.
-The app currently uses Google's **test** ad/billing IDs so it runs anywhere.
+## Protocol reference (TCP / WebSocket, newline-delimited JSON)
 
-**Before launch — swap in your real AdMob IDs:**
-1. Create an [AdMob](https://admob.google.com) account → add app → create a **Banner** unit.
-2. Replace the test **App ID** in `app/android/app/src/main/AndroidManifest.xml`
-   (`com.google.android.gms.ads.APPLICATION_ID`) and the test **banner unit id** in
-   `app/lib/widgets/banner_ad.dart` (`_adUnitId`). For iOS later, add
-   `GADApplicationIdentifier` to `app/ios/Runner/Info.plist`.
-
-**Create the purchase in Play Console:**
-- Monetize → Products → **In-app products** → new managed product, id **`remove_ads`**,
-  price **$1.99**, status **Active**.
-- Test on the **Internal testing** track with a license-tester account. (IAP can't be
-  tested on the emulator — the button shows "Unavailable" there, which is expected.)
-
-## Play Store release build
-
-1. **Create a signing key** (keep this file safe — losing it means you can't update the app):
-   ```
-   keytool -genkey -v -keystore %USERPROFILE%\jawnremote-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias jawnremote
-   ```
-2. **Create `app/android/key.properties`** (do NOT commit it):
-   ```
-   storePassword=********
-   keyPassword=********
-   keyAlias=jawnremote
-   storeFile=C:/Users/user/jawnremote-release.jks
-   ```
-3. **Wire signing into** `app/android/app/build.gradle.kts` (load `key.properties` and set
-   `signingConfigs.release`; point `buildTypes.release.signingConfig` at it). See the
-   commented block added there, or the Flutter docs: <https://docs.flutter.dev/deployment/android>.
-4. **Build the App Bundle** (Play Store format):
-   ```
-   cd app
-   flutter build appbundle --release   # build/app/outputs/bundle/release/app-release.aab
-   ```
-5. Upload the `.aab` in the [Play Console](https://play.google.com/console). You'll also
-   need: a privacy policy URL, store listing graphics, content rating, and a data-safety
-   form (this app collects no personal data; it talks only to your own PC on the LAN).
-
-### iOS later
-The `app/ios/` folder is already scaffolded. When ready, build on a Mac with
-`flutter build ipa`. The Dart networking (raw `Socket`/UDP) is cross-platform, so the
-app logic carries over unchanged.
-
----
-
-## Protocol reference (TCP, newline-delimited JSON)
-
-Client → server:
+Client → server (selected):
 ```jsonc
 {"t":"hello","pin":"0957","name":"Pixel 7"}   // first message; auth
 {"t":"m","x":12,"y":-3}                        // relative mouse move
 {"t":"click","b":"left"}                       // b: left|right|middle
-{"t":"down","b":"left"}  {"t":"up","b":"left"} // press / release (drag)
-{"t":"scroll","y":-120,"x":0}                  // wheel units (120 = one notch)
+{"t":"scroll","y":-120}                        // wheel units (120 = one notch)
 {"t":"text","s":"hello"}                       // type unicode text
 {"t":"key","k":"enter","m":["ctrl"]}           // named key + modifiers
-{"t":"ping"}
+{"t":"power","action":"lock"}                  // lock|sleep|restart|shutdown|logoff
+{"t":"launch","target":"vlc.exe"}              // launch an app-list entry
+{"t":"clipset","s":"..."}  {"t":"clipget"}     // clipboard sync
+{"t":"displays"}                               // list monitors
+{"t":"shot","display":0}                       // screenshot (display omitted = whole desktop)
 ```
 Server → client:
 ```jsonc
 {"t":"welcome","ok":true,"server":"JawnPC"}    // or ok:false, err:"bad_pin"
-{"t":"pong"}
+{"t":"clip","s":"..."}                         // clipboard contents
+{"t":"displays","list":[{"index":0,"w":1920,"h":1080,"primary":true}, ...]}
+{"t":"shot","w":1600,"h":900,"img":"<base64 png>"}
 ```
 UDP discovery: client broadcasts `{"t":"discover","app":"JawnRemote"}` to port 8770;
-server replies `{"t":"server","name":"JawnPC","port":8770}`.
+the server replies with its name and address.
 
 ---
 
 ## Troubleshooting
 
-- **Can't connect / times out:** the firewall isn't open, or Wi-Fi is `Public`. Run the
-  firewall script above (it allows all profiles). Confirm the phone and PC are on the
-  **same** network (not a guest/IoT SSID).
-- **"Wrong PIN":** check `server/pin.txt` or the server window.
-- **Discovery finds nothing, but manual IP works:** the UDP firewall rule is missing, or
-  the router blocks broadcast. Manual IP entry is unaffected.
-- **Cursor too fast/slow:** Settings → Pointer speed. (Tip: turning off Windows "Enhance
+- **Can't connect / times out:** the firewall isn't open, or your Wi-Fi is `Public`.
+  The installer opens the firewall for all profiles; if you're running from source,
+  add the rule manually (TCP+UDP 8770) or run `server/setup_firewall_ADMIN.bat`.
+  Make sure phone and PC are on the **same** network (not a guest/IoT SSID).
+- **"Wrong PIN":** check the PIN in the server window (`server/pin.txt`).
+- **Discovery finds nothing, but manual IP works:** the UDP rule is missing or the
+  router blocks broadcast. Tap **Add PC** and type the IP shown in the server window.
+- **Cursor too fast/slow:** Settings → Pointer speed. (Turning off Windows "Enhance
   pointer precision" makes movement perfectly linear.)
 
 ---
 
-## Roadmap
-- Server: minimize-to-tray + auto-update; code-signed installer (no SmartScreen warning).
-- App: media keys & volume, presentation mode, custom buttons, multi-monitor hint.
-- Cross-platform server (macOS/Linux input injection) for a wider market.
-- iOS release.
+## License
+
+[MIT](LICENSE) © Jawnston Inc.
