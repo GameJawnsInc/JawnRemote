@@ -509,8 +509,10 @@ PAGE = r"""<!doctype html>
       if(m.t==='welcome'){
         if(m.ok){ ready=true; retryMs=800; login.classList.add('hidden');
           dot.classList.add('on'); title.textContent=m.server||'Connected';
+          try{ localStorage.setItem('jr_pin', pin); }catch(e){}   // remember for reconnect
           send({t:'displays'}); }
         else { ready=false; login.classList.remove('hidden');
+          if(m.err!=='locked'){ try{ localStorage.removeItem('jr_pin'); }catch(e){} }
           msg.textContent = m.err==='locked'
             ? 'Too many tries — wait a minute.' : 'Wrong PIN.'; }
       } else if(m.t==='clip'){
@@ -828,6 +830,12 @@ PAGE = r"""<!doctype html>
     document.getElementById('pin').value = hp;
     pin = hp;
     connect();
+  } else {
+    // No PIN in the URL -> reuse the one this device remembered, so a reload or
+    // reopened tab reconnects on its own (like the app). Cleared on a wrong PIN.
+    var sp = '';
+    try { sp = localStorage.getItem('jr_pin') || ''; } catch (e) {}
+    if (sp) { document.getElementById('pin').value = sp; pin = sp; connect(); }
   }
 })();
 </script>
