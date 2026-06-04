@@ -44,6 +44,11 @@ PIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pin.txt")
 MAX_PIN_FAILS = 5
 LOCKOUT_SECONDS = 60
 
+# Seconds a freshly-accepted socket has to send its first line before we reap it.
+# Stops idle browser preconnects / half-open sockets from pinning a handler
+# thread forever (cleared once an app connection is established).
+HANDSHAKE_TIMEOUT = 20
+
 _print_lock = threading.Lock()
 
 
@@ -131,7 +136,19 @@ class Handler(socketserver.StreamRequestHandler):
         if getattr(self.server, "lan_only", True) and not is_lan_ip(peer):
             log(f"[!] refused non-LAN connection from {peer}")
             return
-        first = self.rfile.readline()
+        # Reap a socket that connects but never sends a first line (idle browser
+        # preconnects, half-open WebSockets). Without a timeout the handler
+        # thread blocks here forever; under the browser's reconnect loop these
+        # pile up and starve the web side while the app's one persistent
+        # connection sails on -- the "web spins until I restart" symptom.
+        try:
+            self.connection.settimeout(HANDSHAKE_TIMEOUT)
+        except OSError:
+            pass
+        try:
+            first = self.rfile.readline()
+        except OSError:                  # timeout or reset before any data
+            return
         if not first:
             return
         if web_remote.looks_like_http(first):
@@ -141,6 +158,13 @@ class Handler(socketserver.StreamRequestHandler):
             except (ConnectionError, OSError):
                 pass
             return
+        # App path: a long-lived connection, idle between inputs (the app sends
+        # its own ~4s heartbeat). Drop the handshake timeout so we never reap it
+        # mid-session -- preserves the existing, working app behaviour exactly.
+        try:
+            self.connection.settimeout(None)
+        except OSError:
+            pass
         log(f"[+] {peer} connected")
         try:
             for raw in itertools.chain([first], self.rfile):
@@ -368,6 +392,7 @@ class Handler(socketserver.StreamRequestHandler):
 class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
+    request_queue_size = 128   # absorb bursts (a browser opens several at once)
     on_event = staticmethod(lambda event, info="": None)
 
     def register_client(self, h):

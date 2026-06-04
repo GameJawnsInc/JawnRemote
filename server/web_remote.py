@@ -20,6 +20,11 @@ import screen_win
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+# A live page pings every few seconds, so a WebSocket idle longer than this is
+# gone (phone asleep, Wi-Fi roamed, tab closed without a close frame). Let the
+# read time out and free the handler thread instead of blocking on it forever.
+WS_IDLE_TIMEOUT = 30
+
 # Event types a browser is allowed to send (everything do_input handles except
 # nothing dangerous; no file frames over the browser channel in v1).
 SAFE_INPUT = {"m", "click", "down", "up", "scroll", "text", "key",
@@ -105,6 +110,10 @@ def _websocket(handler, headers, log=print):
         handler.wfile.flush()
     except OSError:
         return
+    try:
+        handler.connection.settimeout(WS_IDLE_TIMEOUT)
+    except OSError:
+        pass
     _ws_loop(handler, log)
 
 
@@ -498,7 +507,7 @@ PAGE = r"""<!doctype html>
     ws.onmessage=function(ev){
       var m; try{ m=JSON.parse(ev.data);}catch(e){return;}
       if(m.t==='welcome'){
-        if(m.ok){ ready=true; login.classList.add('hidden');
+        if(m.ok){ ready=true; retryMs=800; login.classList.add('hidden');
           dot.classList.add('on'); title.textContent=m.server||'Connected';
           send({t:'displays'}); }
         else { ready=false; login.classList.remove('hidden');
@@ -519,9 +528,10 @@ PAGE = r"""<!doctype html>
       retry(); };
     ws.onerror=function(){ try{ws.close();}catch(e){} };
   }
-  var retryT=null;
+  var retryT=null, retryMs=800;
   function retry(){ if(retryT)return; retryT=setTimeout(function(){retryT=null;
-    if(pin) connect();},1200); }
+    if(pin) connect();}, retryMs);
+    retryMs=Math.min(Math.round(retryMs*1.6), 8000); }   // back off, don't hammer
 
   document.getElementById('go').onclick=function(){
     pin=document.getElementById('pin').value.trim(); msg.textContent='';
