@@ -13,6 +13,7 @@ Zero external dependencies -- just run with Python 3.
   py server.py --no-auth       # no PIN (testing only)
 """
 import argparse
+import base64
 import ipaddress
 import itertools
 import json
@@ -30,6 +31,7 @@ import launch_win as lch
 import apps_store as appstore
 import netinfo_win as netinfo
 import clipboard_win as clip
+import screen_win
 import filexfer as fx
 import web_remote
 
@@ -211,6 +213,20 @@ class Handler(socketserver.StreamRequestHandler):
             return {"t": "apps", "apps": appstore.load_apps()}
         if t == "clipget":
             return {"t": "clip", "s": clip.get_text()}
+        if t == "displays":
+            try:
+                return {"t": "displays", "list": screen_win.list_displays()}
+            except Exception as e:
+                log(f"    displays error: {e!r}")
+                return {"t": "displays", "list": []}
+        if t == "shot":
+            try:
+                png, w, h = screen_win.capture_png(display=msg.get("display"))
+                return {"t": "shot", "w": w, "h": h,
+                        "img": base64.b64encode(png).decode("ascii")}
+            except Exception as e:
+                log(f"    shot error: {e!r}")
+                return {"t": "shot", "err": True}
         if t in ("filebeg", "filedat", "fileend", "fileabort",
                  "fileack", "filedone"):
             return self.do_file(t, msg)
