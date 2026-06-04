@@ -65,6 +65,16 @@ if (Test-Path $ogImageFile) {
     if ($LASTEXITCODE -ne 0) { throw "scp og-image.png failed (exit $LASTEXITCODE)" }
 }
 
+# --- [2c/3] Upload favicons if present --------------------------------
+foreach ($fav in @("favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png")) {
+    $favFile = Join-Path $scriptDir $fav
+    if (Test-Path $favFile) {
+        Write-Host "      uploading $fav..." -ForegroundColor Yellow
+        scp -O $favFile "${SshHost}:$RemoteDir/$fav"
+        if ($LASTEXITCODE -ne 0) { throw "scp $fav failed (exit $LASTEXITCODE)" }
+    }
+}
+
 # --- [3/3] Fix ownership so Caddy can read it -------------------------
 Write-Host "[3/3] Fixing ownership via ssh..." -ForegroundColor Yellow
 ssh -n -o BatchMode=yes $SshHost "chown -R caddy:caddy '$RemoteDir'"
