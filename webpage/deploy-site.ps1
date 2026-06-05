@@ -66,7 +66,7 @@ if (Test-Path $ogImageFile) {
 }
 
 # --- [2c/3] Upload favicons if present --------------------------------
-foreach ($fav in @("favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png")) {
+foreach ($fav in @("favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png", "demo_2x.gif")) {
     $favFile = Join-Path $scriptDir $fav
     if (Test-Path $favFile) {
         Write-Host "      uploading $fav..." -ForegroundColor Yellow

@@ -9,6 +9,8 @@ your LAN. It's the firewall-friendly replacement for UnifiedRemote's basic input
 the open port is scoped to your own subnet, so it works even on a "Public" Wi-Fi
 profile (the exact thing that breaks UnifiedRemote on Windows 11).
 
+![JawnRemote — a phone acting as a trackpad and keyboard for a Windows PC](webpage/demo_2x.gif)
+
 Two ways to connect:
 
 - **Android app** — the full-featured client (trackpad gestures, custom macros,

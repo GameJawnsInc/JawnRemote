@@ -48,4 +48,8 @@ _shots/
 *.aab
 installer/Output/
 
+# Demo recordings — the GIF in webpage/ is committed; the raw recording + mp4 stay local
+demo_vid.mkv
+demo_2x.mp4
+
 # Generated launcher icons are reproducible from tools/make_icon.py + flutter_launcher_icons
