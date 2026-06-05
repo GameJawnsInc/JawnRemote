@@ -49,6 +49,12 @@ LOCKOUT_SECONDS = 60
 # thread forever (cleared once an app connection is established).
 HANDSHAKE_TIMEOUT = 20
 
+# Idle read timeout for an established app connection. The app pings every ~4s,
+# so a live client never trips it; a half-open/abandoned one (phone slept, Wi-Fi
+# roamed, force-quit without a FIN) is reaped instead of lingering as a zombie
+# the GUI's "Send file" could target.
+APP_IDLE_TIMEOUT = 20
+
 _print_lock = threading.Lock()
 
 
@@ -158,11 +164,12 @@ class Handler(socketserver.StreamRequestHandler):
             except (ConnectionError, OSError):
                 pass
             return
-        # App path: a long-lived connection, idle between inputs (the app sends
-        # its own ~4s heartbeat). Drop the handshake timeout so we never reap it
-        # mid-session -- preserves the existing, working app behaviour exactly.
+        # App path: long-lived. The app pings every ~4s, so a generous idle
+        # timeout reaps a dead/abandoned connection (zombie) without ever
+        # tripping a healthy one -- the steady inbound ping traffic keeps it
+        # alive, and active transfers keep data flowing too.
         try:
-            self.connection.settimeout(None)
+            self.connection.settimeout(APP_IDLE_TIMEOUT)
         except OSError:
             pass
         log(f"[+] {peer} connected")
