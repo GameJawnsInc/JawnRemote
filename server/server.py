@@ -379,9 +379,19 @@ class Handler(socketserver.StreamRequestHandler):
                         except Exception:
                             pass
                 self.send(frame)
+            # Wait for the phone's final `filedone`. fileacks for the last
+            # chunks share this condition variable (both notify_all), so a
+            # single `if ... wait` gets woken early by a trailing ack with
+            # _send_done still None -> spurious False. That surfaced as
+            # "Couldn't send (is the app open?)" even though the file arrived.
+            # Loop on the real condition until filedone or a true timeout.
+            deadline = time.monotonic() + 20
             with self._send_cv:
-                if self._send_done is None:
-                    self._send_cv.wait(timeout=20)
+                while self._send_done is None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._send_cv.wait(timeout=remaining)
                 done = self._send_done
             return bool(done and done.get("ok"))
         except (OSError, ValueError) as e:
