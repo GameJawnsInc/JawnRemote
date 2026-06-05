@@ -3,7 +3,7 @@
 ; Produces:    installer\Output\JawnRemote-Server-Setup.exe
 ;
 ; The installer runs elevated (one UAC prompt), so it can open the firewall on
-; ALL network profiles (incl. Public) -- the thing that breaks UnifiedRemote --
+; ALL network profiles (incl. Public) -- a common Public-Wi-Fi connection blocker --
 ; but scoped to remoteip=localsubnet so only your own LAN can reach the port.
 ; The open port stays invisible to the internet.
 
