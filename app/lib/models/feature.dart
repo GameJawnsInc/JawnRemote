@@ -10,6 +10,7 @@ class FeatureDef {
 const List<FeatureDef> kFeatures = [
   FeatureDef('media', 'Media'),
   FeatureDef('keyboard', 'Keyboard'),
+  FeatureDef('gamepad', 'Gamepad'),
   FeatureDef('apps', 'Apps'),
   FeatureDef('macros', 'Macros'),
   FeatureDef('present', 'Presentation'),

@@ -33,6 +33,7 @@ Two ways to connect:
 | **Quick View** — pull a screenshot of the PC, pinch-to-zoom, pick a monitor | ✅ | ✅ |
 | Power (lock, sleep, restart, shut down, log off) | ✅ | ✅ |
 | Custom macros — buttons that fire keystrokes or launch apps | ✅ | — |
+| **Gamepad** — virtual Xbox 360 controller; on-screen pad or forward a real one | ✅ | — |
 | File transfer (phone ↔ PC) | ✅ | — |
 | Wake-on-LAN — turn the PC on from your phone | ✅ | — |
 | Auto-discovery (finds your PC on the Wi-Fi) | ✅ | — |
@@ -40,6 +41,11 @@ Two ways to connect:
 
 Nothing is stored in the cloud; Quick View screenshots are never written to disk —
 they're streamed once and dropped when you close the viewer.
+
+The **Gamepad** feature emulates an Xbox 360 controller through the ViGEmBus driver
+(an optional, opt-in component the PC installer offers) — drive it with the on-screen
+pad, or pair a real controller to your phone and forward it. Releasing or
+disconnecting always returns the pad to neutral, so nothing stays "held."
 
 ---
 

@@ -10,6 +10,7 @@ import '../widgets/keyboard_bar.dart';
 import 'apps_screen.dart';
 import 'clipboard_screen.dart';
 import 'files_screen.dart';
+import 'gamepad_screen.dart';
 import 'macros_screen.dart';
 import 'presentation_screen.dart';
 import 'settings_screen.dart';
@@ -171,6 +172,15 @@ class _RemoteScreenState extends State<RemoteScreen> {
             label: 'Keyboard',
             active: _keyboard,
             onTap: () => setState(() => _keyboard = !_keyboard),
+          ),
+        ),
+      if (s.isFeatureVisible('gamepad'))
+        Expanded(
+          child: _FeatureCell(
+            icon: Icons.sports_esports,
+            label: 'Gamepad',
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => GamepadScreen(client: client))),
           ),
         ),
       if (s.isFeatureVisible('apps'))

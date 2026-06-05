@@ -52,6 +52,13 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   /// In-flight monitor-list request.
   Completer<List<Map<String, dynamic>>>? _displaysPending;
 
+  /// In-flight virtual-gamepad plug request (padconnect -> padstatus).
+  Completer<bool>? _padPending;
+
+  /// Whether the PC reported a virtual gamepad is available (ViGEmBus present).
+  bool padReady = false;
+  String padError = '';
+
   // Reconnect backoff (ms) by attempt — the first retry is near-instant.
   static const List<int> _backoffMs = [200, 500, 1000, 2000, 3000, 5000];
   // Heartbeat: ping this often; declare the link dead after this much silence.
@@ -189,6 +196,14 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
               ? list.whereType<Map<String, dynamic>>().toList()
               : const <Map<String, dynamic>>[]);
         }
+        break;
+      case 'padstatus':
+        padReady = msg['ok'] == true;
+        padError = (msg['err'] ?? '').toString();
+        final c = _padPending;
+        _padPending = null;
+        if (c != null && !c.isCompleted) c.complete(padReady);
+        notifyListeners();
         break;
       case 'fileack':
       case 'filedone':
@@ -338,6 +353,48 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void sendClipboard(String text) => _sendRaw({'t': 'clipset', 's': text});
   void requestClipboard() => _sendRaw({'t': 'clipget'});
   void ping() => _sendRaw({'t': 'ping'});
+
+  // ---- virtual gamepad (stateful: each message is the full current state) ----
+  /// Ask the PC to plug in a virtual Xbox 360 pad. Resolves true if the driver
+  /// is present and the pad is live, false otherwise (resolves false on timeout
+  /// or when ViGEmBus isn't installed). [padError] holds the reason on failure.
+  Future<bool> padConnect() {
+    final prev = _padPending;
+    if (prev != null && !prev.isCompleted) return prev.future;
+    final c = Completer<bool>();
+    _padPending = c;
+    _sendRaw({'t': 'padconnect'});
+    Future.delayed(const Duration(seconds: 6), () {
+      if (!c.isCompleted) {
+        if (identical(_padPending, c)) _padPending = null;
+        c.complete(false);
+      }
+    });
+    return c.future;
+  }
+
+  void padDisconnect() => _sendRaw({'t': 'paddisconnect'});
+
+  /// Send the full pad state. [b] is the XUSB button bitmask; triggers are
+  /// 0–255; sticks are int16 (-32768..32767, +Y is up).
+  void sendPad(
+          {int b = 0,
+          int lt = 0,
+          int rt = 0,
+          int lx = 0,
+          int ly = 0,
+          int rx = 0,
+          int ry = 0}) =>
+      _sendRaw({
+        't': 'pad',
+        'b': b,
+        'lt': lt,
+        'rt': rt,
+        'lx': lx,
+        'ly': ly,
+        'rx': rx,
+        'ry': ry,
+      });
 
   /// Ask the PC for a one-off screenshot. [display] is a monitor index from
   /// [requestDisplays] (null = whole virtual desktop). Resolves with PNG bytes,

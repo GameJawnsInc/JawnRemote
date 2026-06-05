@@ -8,7 +8,7 @@
 ; The open port stays invisible to the internet.
 
 #define MyAppName "JawnRemote"
-#define MyAppVersion "1.12.7"
+#define MyAppVersion "1.13.0"
 #define MyAppPublisher "Jawnston Inc."
 #define MyAppExeName "JawnRemoteServer.exe"
 #define Port "8770"
@@ -40,6 +40,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Files]
 Source: "..\server\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Optional virtual-gamepad driver (ViGEmBus, signed by Nefarius). Offered as a
+; finish-page checkbox; only needed for the Gamepad feature.
+Source: "vendor\ViGEmBus_1.22.0_x64_x86_arm64.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -56,6 +59,9 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#MyAppName} (discovery)"""; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#MyAppName}"" dir=in action=allow protocol=TCP localport={#Port} profile=any remoteip=localsubnet"; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#MyAppName} (discovery)"" dir=in action=allow protocol=UDP localport={#Port} profile=any remoteip=localsubnet"; Flags: runhidden
+; Optional: install the virtual-gamepad driver (its own signed wizard). Opt-in
+; (unchecked) since it's a kernel driver only the Gamepad feature needs.
+Filename: "{app}\ViGEmBus_1.22.0_x64_x86_arm64.exe"; Description: "Install virtual gamepad driver (ViGEmBus) — enables controller emulation"; Flags: postinstall skipifsilent unchecked
 ; Launch after install.
 Filename: "{app}\{#MyAppExeName}"; Description: "Start {#MyAppName} now"; Flags: nowait postinstall skipifsilent
 

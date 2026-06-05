@@ -34,6 +34,7 @@ import clipboard_win as clip
 import screen_win
 import filexfer as fx
 import web_remote
+import gamepad_win as pad
 
 APP = "JawnRemote"
 VERSION = 1
@@ -119,6 +120,7 @@ class Handler(socketserver.StreamRequestHandler):
             pass
         self.authed = not self.server.require_auth
         self._who = None
+        self._pad_active = False        # this connection has plugged a virtual pad
         self._incoming = None           # in-progress inbound file (phone -> PC)
         self._wlock = threading.Lock()  # serialize writes (read-loop vs GUI push)
         self._send_cv = threading.Condition()  # outbound push ack signaling
@@ -189,6 +191,12 @@ class Handler(socketserver.StreamRequestHandler):
         except (ConnectionError, OSError):
             pass
         finally:
+            # Failsafe: if this connection drove a virtual gamepad, release all
+            # inputs and unplug it the moment the socket drops or is reaped --
+            # otherwise a held stick/button stays held (character runs forever).
+            if self._pad_active:
+                pad.unplug()
+                self._pad_active = False
             self.server.unregister_client(self)
             log(f"[-] {peer} disconnected")
             if self._who:
@@ -258,6 +266,15 @@ class Handler(socketserver.StreamRequestHandler):
             except Exception as e:
                 log(f"    shot error: {e!r}")
                 return {"t": "shot", "err": True}
+        if t == "padconnect":
+            ok = pad.plug()
+            if ok:
+                self._pad_active = True
+                log("    gamepad: virtual pad plugged in")
+            else:
+                log(f"    gamepad unavailable: {pad.last_error()}")
+            return {"t": "padstatus", "ok": ok,
+                    "err": None if ok else pad.last_error()}
         if t in ("filebeg", "filedat", "fileend", "fileabort",
                  "fileack", "filedone"):
             return self.do_file(t, msg)
@@ -298,6 +315,14 @@ class Handler(socketserver.StreamRequestHandler):
             s = msg.get("s", "")
             if isinstance(s, str) and clip.set_text(s):
                 log("    clipboard set from phone")
+        elif t == "pad":
+            # Stateful: holds until the next state. apply_msg auto-plugs if a
+            # padconnect was missed, so mark the connection for failsafe cleanup.
+            if pad.apply_msg(msg):
+                self._pad_active = True
+        elif t == "paddisconnect":
+            pad.unplug()
+            self._pad_active = False
 
     def do_file(self, t, msg):
         """Handle one file-transfer frame (either direction). Returns a reply
