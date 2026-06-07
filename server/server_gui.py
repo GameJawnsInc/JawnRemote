@@ -198,7 +198,10 @@ class App:
         tk.Label(r, text="Phone mouse & keyboard", bg=BG, fg=MUTED,
                  font=("Segoe UI", 10)).pack()
 
-        self.status = tk.Label(r, text="Starting…", bg=BG, fg=MUTED,
+        # NOTE: keep the "●  " prefix in sync with _set_status / the
+        # _refresh_firewall guard below — otherwise the status never advances
+        # past "Starting…" when the firewall is already configured at launch.
+        self.status = tk.Label(r, text="●  Starting…", bg=BG, fg=MUTED,
                                font=("Segoe UI", 11, "bold"))
         self.status.pack(pady=(16, 8))
 
