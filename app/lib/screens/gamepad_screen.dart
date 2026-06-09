@@ -51,6 +51,7 @@ class _GamepadScreenState extends State<GamepadScreen> {
   String _hwName = '';
   Timer? _tx; // ~60 Hz coalescing sender
   bool _dirty = false;
+  bool _released = false; // user unplugged the pad via the Release button
   List<int> _lastSent = const [];
 
   @override
@@ -68,6 +69,15 @@ class _GamepadScreenState extends State<GamepadScreen> {
   Future<void> _connect() async {
     final ok = await widget.client.padConnect();
     if (mounted) setState(() => _available = ok);
+  }
+
+  /// Explicitly unplug the virtual pad from the PC and leave. Sets [_released]
+  /// so _flush stops sending state (the server auto-replugs on any pad frame).
+  void _releaseAndExit() {
+    _released = true;
+    _tx?.cancel();
+    widget.client.padDisconnect();
+    if (mounted) Navigator.of(context).maybePop();
   }
 
   Future<void> _initHardware() async {
@@ -89,7 +99,7 @@ class _GamepadScreenState extends State<GamepadScreen> {
   void _markDirty() => _dirty = true;
 
   void _flush() {
-    if (!_dirty) return;
+    if (_released || !_dirty) return;
     _dirty = false;
     final b = _tBtn | _hBtn;
     final lt = _mergeTrig(_tLT, _hLT), rt = _mergeTrig(_tRT, _hRT);
@@ -220,9 +230,11 @@ class _GamepadScreenState extends State<GamepadScreen> {
   void dispose() {
     _tx?.cancel();
     _hwSub?.cancel();
-    // Release everything and unplug so nothing stays "held" on the PC.
-    widget.client.sendPad();
-    widget.client.padDisconnect();
+    // Release all inputs but KEEP the pad plugged in. Leaving this screen (to
+    // use Macros/Mouse and come back) must NOT disconnect the controller, or
+    // games pause on "controller disconnected." The pad is unplugged only when
+    // the connection ends (server failsafe) or you disconnect from the PC.
+    if (!_released) widget.client.sendPad();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     super.dispose();
@@ -266,13 +278,18 @@ class _GamepadScreenState extends State<GamepadScreen> {
           padding: const EdgeInsets.only(top: 4),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             _MiniButton(label: 'Back', onChanged: (d) => _touchButton(_kBack, d)),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             IconButton(
-              tooltip: 'Exit gamepad',
+              tooltip: 'Release controller (unplug from the PC)',
+              icon: const Icon(Icons.videogame_asset_off, color: Colors.white38),
+              onPressed: _releaseAndExit,
+            ),
+            IconButton(
+              tooltip: 'Minimize — keeps the controller connected',
               icon: const Icon(Icons.close, color: Colors.white38),
               onPressed: () => Navigator.of(context).maybePop(),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             _MiniButton(
                 label: 'Start', onChanged: (d) => _touchButton(_kStart, d)),
           ]),
