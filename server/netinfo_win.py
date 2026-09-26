@@ -1,7 +1,7 @@
 """
 Best-effort LAN MAC lookup so the phone can learn this PC's MAC (for
 Wake-on-LAN). Uses GetAdaptersInfo via ctypes -- no external dependencies --
-and returns the MAC of the adapter holding the primary LAN IP.
+and returns the MAC of the adapter holding a given (or the primary) LAN IP.
 
 Returns an empty string if anything goes wrong; Wake-on-LAN is optional.
 """
@@ -62,40 +62,63 @@ def _format_mac(addr, length):
     return ":".join("%02X" % addr[i] for i in range(6))
 
 
-def get_primary_mac(prefer_ip=None):
-    """MAC of the adapter with the primary LAN IP, else any real adapter; '' on failure."""
+def _adapters():
+    """[(ips, mac), ...] for each adapter with a MAC, where ips is every IPv4
+    on it (GetAdaptersInfo order); [] on failure."""
     try:
         get_info = ctypes.windll.iphlpapi.GetAdaptersInfo
     except (OSError, AttributeError):
-        return ""
+        return []
 
     size = wintypes.ULONG(0)
     get_info(None, ctypes.byref(size))  # first call sizes the buffer
     if size.value == 0:
-        return ""
+        return []
     buf = ctypes.create_string_buffer(size.value)
     if get_info(ctypes.cast(buf, ctypes.POINTER(IP_ADAPTER_INFO)),
                 ctypes.byref(size)) != 0:
-        return ""
+        return []
 
-    adapters = []  # (ip, mac)
+    adapters = []  # (ips, mac)
     node = ctypes.cast(buf, ctypes.POINTER(IP_ADAPTER_INFO))
     while node:
         a = node.contents
         mac = _format_mac(a.Address, a.AddressLength)
-        ip = a.IpAddressList.IpAddress.String.decode("ascii", "ignore")
+        ips = []
+        n = a.IpAddressList  # an adapter can hold several IPs: walk the chain
+        while True:
+            ips.append(n.IpAddress.String.decode("ascii", "ignore"))
+            if not n.Next:
+                break
+            n = n.Next.contents
         if mac:
-            adapters.append((ip, mac))
+            adapters.append((ips, mac))
         node = a.Next
+    return adapters
 
+
+def get_primary_mac(prefer_ip=None):
+    """MAC of the adapter with the primary LAN IP, else any real adapter; '' on failure."""
+    adapters = _adapters()
     if prefer_ip:
-        for ip, mac in adapters:
-            if ip == prefer_ip:
+        for ips, mac in adapters:
+            if prefer_ip in ips:
                 return mac
-    for ip, mac in adapters:
-        if ip and ip != "0.0.0.0":
+    for ips, mac in adapters:
+        if any(ip and ip != "0.0.0.0" for ip in ips):
             return mac
     return adapters[0][1] if adapters else ""
+
+
+def mac_for_ip(ip):
+    """MAC of the adapter that owns exactly this IPv4 address, or '' if none.
+    Never guesses -- e.g. pass the local address a phone connected to."""
+    if not ip or ip == "0.0.0.0":
+        return ""
+    for ips, mac in _adapters():
+        if ip in ips:
+            return mac
+    return ""
 
 
 if __name__ == "__main__":

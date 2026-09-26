@@ -5,12 +5,17 @@ Grabs the whole virtual desktop (or a single chosen monitor), downscales it
 inside GDI (fast, native), and returns a PNG built with the stdlib only -- ctypes
 for the capture,
 zlib for the compression. Nothing is ever written to disk: the bytes are handed
-straight to the WebSocket and forgotten.
+straight to the WebSocket and forgotten. The mouse pointer is drawn in too.
 
-Deliberately does NOT touch the process DPI-awareness state (that would disturb
-the Tkinter server window); on a scaled display we simply capture at the logical
-resolution, which is plenty for a quick look.
+The process is DPI-unaware, so on a scaled display (125%/150%) monitor sizes
+come back in logical units while the screen DC is physical -- capturing with
+them would crop to the top-left of the desktop. So each capture / display
+listing switches just the *calling* thread (a server socket thread) to
+per-monitor DPI awareness and restores it afterwards; the process state and
+the Tkinter window's thread are never touched. On Windows older than 10 1607
+(no per-thread switch) captures stay logical-sized, as before.
 """
+import contextlib
 import ctypes
 import struct
 import zlib
@@ -34,6 +39,13 @@ SM_XVIRTUALSCREEN = 76
 SM_YVIRTUALSCREEN = 77
 SM_CXVIRTUALSCREEN = 78
 SM_CYVIRTUALSCREEN = 79
+
+CURSOR_SHOWING = 0x0001
+DI_NORMAL = 0x0003
+
+# DPI_AWARENESS_CONTEXT pseudo-handles.
+DPI_CTX_PER_MONITOR_AWARE = -3       # Windows 10 1607+
+DPI_CTX_PER_MONITOR_AWARE_V2 = -4    # Windows 10 1703+
 
 HANDLE = ctypes.c_void_p  # pointer-width -- avoids 64-bit handle truncation
 
@@ -74,6 +86,29 @@ class MONITORINFOEX(ctypes.Structure):
         ("rcWork", RECT),
         ("dwFlags", wintypes.DWORD),
         ("szDevice", wintypes.WCHAR * CCHDEVICENAME),
+    )
+
+
+class POINT(ctypes.Structure):
+    _fields_ = (("x", wintypes.LONG), ("y", wintypes.LONG))
+
+
+class CURSORINFO(ctypes.Structure):
+    _fields_ = (
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", HANDLE),
+        ("ptScreenPos", POINT),
+    )
+
+
+class ICONINFO(ctypes.Structure):
+    _fields_ = (
+        ("fIcon", wintypes.BOOL),
+        ("xHotspot", wintypes.DWORD),
+        ("yHotspot", wintypes.DWORD),
+        ("hbmMask", HANDLE),
+        ("hbmColor", HANDLE),
     )
 
 
@@ -123,14 +158,54 @@ user32.EnumDisplayMonitors.restype = ctypes.c_int
 user32.GetMonitorInfoW.argtypes = (HANDLE, ctypes.c_void_p)
 user32.GetMonitorInfoW.restype = ctypes.c_int
 
+user32.GetCursorInfo.argtypes = (ctypes.c_void_p,)
+user32.GetCursorInfo.restype = ctypes.c_int
+user32.GetIconInfo.argtypes = (HANDLE, ctypes.c_void_p)
+user32.GetIconInfo.restype = ctypes.c_int
+user32.DrawIconEx.argtypes = (
+    HANDLE, ctypes.c_int, ctypes.c_int, HANDLE, ctypes.c_int, ctypes.c_int,
+    wintypes.UINT, HANDLE, wintypes.UINT,
+)
+user32.DrawIconEx.restype = ctypes.c_int
+
+try:
+    _SetThreadDpiCtx = user32.SetThreadDpiAwarenessContext
+    _SetThreadDpiCtx.argtypes = (HANDLE,)
+    _SetThreadDpiCtx.restype = HANDLE
+except AttributeError:                     # Windows before 10 1607
+    _SetThreadDpiCtx = None
+
+
+@contextlib.contextmanager
+def _physical_pixels():
+    """Make the calling thread per-monitor DPI aware for the duration, so
+    monitor rects, virtual-screen metrics and the screen DC all use physical
+    pixels. Restores the thread's previous context; nesting is harmless."""
+    prev = None
+    if _SetThreadDpiCtx:
+        prev = _SetThreadDpiCtx(HANDLE(DPI_CTX_PER_MONITOR_AWARE_V2))
+        if not prev:
+            prev = _SetThreadDpiCtx(HANDLE(DPI_CTX_PER_MONITOR_AWARE))
+    try:
+        yield
+    finally:
+        if prev:
+            _SetThreadDpiCtx(HANDLE(prev))
+
 
 def list_displays():
     """Enumerate monitors -> [{index,x,y,w,h,primary,name}, ...].
 
     Order is EnumDisplayMonitors order (stable within a session). Coordinates are
-    in the same virtual-screen space BitBlt uses, so they feed straight into a
-    per-monitor capture.
+    physical pixels in the same virtual-screen space BitBlt uses, so they feed
+    straight into a per-monitor capture.
     """
+    with _physical_pixels():
+        return _list_displays_raw()
+
+
+def _list_displays_raw():
+    """list_displays() body; the caller provides the DPI context."""
     out = []
 
     def _cb(hmon, hdc, lprc, data):
@@ -184,6 +259,34 @@ def _png(rgb, w, h):
             chunk(b"IEND", b""))
 
 
+def _draw_cursor(memdc, sx, sy, sw, sh, tw, th):
+    """Draw the mouse pointer onto the captured bitmap (GDI's screen copy never
+    includes it). Source rect (sx, sy, sw, sh) was scaled to (tw, th); the
+    pointer keeps its native size so it stays easy to spot."""
+    ci = CURSORINFO()
+    ci.cbSize = ctypes.sizeof(CURSORINFO)
+    if not user32.GetCursorInfo(ctypes.byref(ci)):
+        return
+    if not (ci.flags & CURSOR_SHOWING) or not ci.hCursor:
+        return
+    px, py = ci.ptScreenPos.x, ci.ptScreenPos.y
+    if not (sx <= px < sx + sw and sy <= py < sy + sh):
+        return                             # pointer is on another monitor
+    hx = hy = 0
+    ii = ICONINFO()
+    if user32.GetIconInfo(ci.hCursor, ctypes.byref(ii)):
+        hx, hy = ii.xHotspot, ii.yHotspot
+        # GetIconInfo hands back copies of the bitmaps -- ours to delete. The
+        # cursor itself is shared: never destroy it.
+        if ii.hbmMask:
+            gdi32.DeleteObject(ii.hbmMask)
+        if ii.hbmColor:
+            gdi32.DeleteObject(ii.hbmColor)
+    user32.DrawIconEx(memdc, int((px - sx) * tw / sw) - hx,
+                      int((py - sy) * th / sh) - hy,
+                      ci.hCursor, 0, 0, 0, None, DI_NORMAL)
+
+
 def capture_png(display=None, max_dim=MAX_DIM):
     """Capture the desktop and return (png_bytes, width, height).
 
@@ -192,10 +295,16 @@ def capture_png(display=None, max_dim=MAX_DIM):
     the full max_dim budget instead of sharing it across both. An out-of-range
     index falls back to the whole desktop.
     """
+    with _physical_pixels():
+        return _capture_png_raw(display, max_dim)
+
+
+def _capture_png_raw(display, max_dim):
+    """capture_png() body; the caller provides the DPI context."""
     sx = sy = sw = sh = 0
     if display is not None:
         try:
-            d = list_displays()[int(display)]
+            d = _list_displays_raw()[int(display)]
             sx, sy, sw, sh = d["x"], d["y"], d["w"], d["h"]
         except (ValueError, TypeError, IndexError):
             sw = sh = 0
@@ -220,6 +329,10 @@ def capture_png(display=None, max_dim=MAX_DIM):
         if not gdi32.StretchBlt(memdc, 0, 0, tw, th,
                                 screen, sx, sy, sw, sh, SRCCOPY):
             raise OSError("StretchBlt failed")
+        try:
+            _draw_cursor(memdc, sx, sy, sw, sh, tw, th)
+        except Exception:
+            pass                           # a picture without a pointer is fine
 
         bmi = BITMAPINFOHEADER()
         bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)

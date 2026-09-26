@@ -82,6 +82,11 @@ user32.SendInput.restype = wintypes.UINT
 user32.VkKeyScanW.argtypes = (wintypes.WCHAR,)
 user32.VkKeyScanW.restype = ctypes.c_short
 
+# VK -> scan code; the high byte is the 0xE0 / 0xE1 prefix, if any.
+MAPVK_VK_TO_VSC_EX = 4
+user32.MapVirtualKeyW.argtypes = (wintypes.UINT, wintypes.UINT)
+user32.MapVirtualKeyW.restype = wintypes.UINT
+
 
 class POINT(ctypes.Structure):
     _fields_ = (("x", wintypes.LONG), ("y", wintypes.LONG))
@@ -206,7 +211,11 @@ VK = {
     "medianext": 0xB0, "mediaprev": 0xB1, "mediastop": 0xB2,
     "mediaplaypause": 0xB3, "playpause": 0xB3,
     "browserback": 0xA6, "browserforward": 0xA7,
+    # Aliases people type into macros (the keyboard bar shows PgUp/PgDn/Ins).
+    "pgup": 0x21, "pgdn": 0x22, "pgdown": 0x22, "ins": 0x2D,
+    "bksp": 0x08, "caps": 0x14, "printscr": 0x2C, "prtscn": 0x2C,
 }
+VK.update({f"f{i}": 0x6F + i for i in range(13, 25)})  # f13..f24 = 0x7C..0x87
 
 # Keys that require the extended-key flag for correct behaviour.
 _EXTENDED = {
@@ -226,20 +235,41 @@ def _ext(vk):
     return KEYEVENTF_EXTENDEDKEY if vk in _EXTENDED else 0
 
 
+def _vk_input(vk, up=False):
+    """A virtual-key event that also carries the key's hardware scan code, so
+    apps that read scan codes (games, RDP/VM windows, browsers' KeyboardEvent
+    .code) see a real key rather than scan code 0. wVk stays authoritative."""
+    flags = _ext(vk) | (KEYEVENTF_KEYUP if up else 0)
+    sc = user32.MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX)
+    pre = (sc >> 8) & 0xFF
+    if pre == 0xE1:        # Pause: a multi-byte sequence; leave it unset
+        sc = 0
+    elif pre == 0xE0:
+        flags |= KEYEVENTF_EXTENDEDKEY
+    return _kbd(vk=vk, scan=sc & 0xFF, flags=flags)
+
+
 def _vk_for_char(ch):
-    """Returns (vk, needs_shift) for a single character, or None."""
-    res = user32.VkKeyScanW(ch)
+    """Returns (vk, shift_state) for a single character, or None. shift_state
+    is VkKeyScanW's high byte: 1 = Shift, 2 = Ctrl, 4 = Alt (6 = AltGr)."""
+    try:
+        res = user32.VkKeyScanW(ch)
+    except ctypes.ArgumentError:   # beyond one UTF-16 unit (emoji): no key
+        return None
     if res == -1:
         return None
     vk = res & 0xFF
     shift_state = (res >> 8) & 0xFF
-    return vk, bool(shift_state & 1)
+    return vk, shift_state
 
 
 def key(name, modifiers=()):
     """Press a named key (or single character) with optional modifiers held.
-    Used for special keys and shortcuts like Ctrl+C."""
-    name_l = str(name).lower()
+    Used for special keys and shortcuts like Ctrl+C. Raises ValueError, before
+    pressing anything, for a key it can't resolve -- so a typo never taps a
+    bare Win (opens Start) or Alt (focuses the menu bar)."""
+    name = str(name)
+    name_l = name.lower()
     mod_vks = []
     for m in modifiers or ():
         m = str(m).lower()
@@ -249,33 +279,40 @@ def key(name, modifiers=()):
         if mv and mv not in mod_vks:
             mod_vks.append(mv)
 
-    seq = []
-    for mv in mod_vks:
-        seq.append(_kbd(vk=mv, flags=_ext(mv)))
+    # Resolve the main key first.
+    vk = VK.get(name_l)
+    if vk is None and len(name) > 1:
+        # "page down" / "page_down" / "page-down" -> "pagedown"
+        vk = VK.get(name_l.replace(" ", "").replace("_", "").replace("-", ""))
+    main = []
+    if vk is not None:
+        main.append(_vk_input(vk))
+        main.append(_vk_input(vk, up=True))
+    elif len(name) == 1:
+        info = _vk_for_char(name)
+        if info is None or info[0] == 0xFF or (info[1] & 6 and not mod_vks):
+            # Not on this layout's keys, or needs AltGr/Ctrl+Alt (e.g. '@' on
+            # a German layout): type the character itself instead. With
+            # modifiers held there's no key to combine them with.
+            if mod_vks:
+                raise ValueError(f"unknown key {name!r}")
+            type_text(name)
+            return
+        vk, shift_state = info
+        add_shift = bool(shift_state & 1) and 0x10 not in mod_vks
+        if add_shift:
+            main.append(_vk_input(0x10))
+        main.append(_vk_input(vk))
+        main.append(_vk_input(vk, up=True))
+        if add_shift:
+            main.append(_vk_input(0x10, up=True))
+    else:
+        raise ValueError(f"unknown key {name!r}")
 
-    if name_l in VK:
-        vk = VK[name_l]
-        seq.append(_kbd(vk=vk, flags=_ext(vk)))
-        seq.append(_kbd(vk=vk, flags=_ext(vk) | KEYEVENTF_KEYUP))
-    elif len(str(name)) == 1:
-        info = _vk_for_char(str(name))
-        if info is not None and info[0] != 0xFF:
-            vk, needs_shift = info
-            add_shift = needs_shift and 0x10 not in mod_vks
-            if add_shift:
-                seq.append(_kbd(vk=0x10))
-            seq.append(_kbd(vk=vk))
-            seq.append(_kbd(vk=vk, flags=KEYEVENTF_KEYUP))
-            if add_shift:
-                seq.append(_kbd(vk=0x10, flags=KEYEVENTF_KEYUP))
-        elif not mod_vks:
-            type_text(str(name))
-
-    for mv in reversed(mod_vks):
-        seq.append(_kbd(vk=mv, flags=_ext(mv) | KEYEVENTF_KEYUP))
-
-    if seq:
-        _send(*seq)
+    seq = [_vk_input(mv) for mv in mod_vks]
+    seq += main
+    seq += [_vk_input(mv, up=True) for mv in reversed(mod_vks)]
+    _send(*seq)
 
 
 if __name__ == "__main__":
