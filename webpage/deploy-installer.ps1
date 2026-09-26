@@ -5,7 +5,12 @@
 # "PC server for Windows" button has a file to serve.
 #   URL: https://jawnston.com/downloads/jawnremote/JawnRemote-Server-Setup.exe
 #
-# Builds the installer first if it's missing (needs Inno Setup).
+# Builds the installer first if it's missing OR STALE (needs Inno Setup). Stale
+# means older than any of its inputs - the .iss, the PyInstaller server exe, or
+# anything under installer\vendor\. An earlier version of this script only built
+# when the exe was *missing*, which silently shipped a months-old installer: the
+# gamepad release went out without its ViGEmBus driver checkbox because a
+# pre-gamepad Output\ exe was still sitting on disk.
 #
 # RESUMABLE UPLOAD: the server resets long SSH transfers partway through, so a
 # plain `scp` can fail over and over (scp can't resume - each retry restarts
@@ -17,22 +22,62 @@
 # Usage:
 #   .\deploy-installer.ps1
 #   .\deploy-installer.ps1 -SshHost mygame
+#   .\deploy-installer.ps1 -Rebuild        # force a fresh Inno build first
 
 param(
-    [string]$SshHost = "mygame"
+    [string]$SshHost = "mygame",
+    [switch]$Rebuild
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo      = Split-Path -Parent $scriptDir
 $installerWin = Join-Path $repo "installer\Output\JawnRemote-Server-Setup.exe"
 $iss       = Join-Path $repo "installer\JawnRemote.iss"
+$serverExe = Join-Path $repo "server\dist\JawnRemoteServer.exe"
+$vendorDir = Join-Path $repo "installer\vendor"
 $iscc      = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 
-if (-not (Test-Path $installerWin)) {
-    Write-Host "Installer missing - building with Inno Setup..." -ForegroundColor Yellow
+# Everything the installer is built FROM. If any input is newer than the exe in
+# Output\, that exe is stale and must not be uploaded.
+$inputs = @($iss, $serverExe)
+if (Test-Path $vendorDir) {
+    $inputs += (Get-ChildItem $vendorDir -File -Recurse | ForEach-Object { $_.FullName })
+}
+
+$reason = ""
+if ($Rebuild) {
+    $reason = "-Rebuild requested"
+} elseif (-not (Test-Path $installerWin)) {
+    $reason = "installer missing"
+} else {
+    $builtAt = (Get-Item $installerWin).LastWriteTimeUtc
+    foreach ($in in $inputs) {
+        if (-not (Test-Path $in)) { continue }
+        if ((Get-Item $in).LastWriteTimeUtc -gt $builtAt) {
+            $reason = "stale - $(Split-Path -Leaf $in) is newer than the built installer"
+            break
+        }
+    }
+}
+
+if ($reason -ne "") {
+    Write-Host "Building with Inno Setup ($reason)..." -ForegroundColor Yellow
     if (-not (Test-Path $iscc)) { Write-Host "Inno Setup not found at $iscc" -ForegroundColor Red; exit 1 }
     & $iscc $iss | Out-Null
-    if (-not (Test-Path $installerWin)) { Write-Host "Build failed" -ForegroundColor Red; exit 1 }
+    # Test-Path alone is not enough: a stale exe from an earlier build would
+    # still be sitting there and would sail through the check.
+    if ($LASTEXITCODE -ne 0) { Write-Host "ISCC failed (exit $LASTEXITCODE)" -ForegroundColor Red; exit 1 }
+    if (-not (Test-Path $installerWin)) { Write-Host "Build produced no output" -ForegroundColor Red; exit 1 }
+}
+
+# Belt and braces: refuse to upload if the exe is somehow still older than an input.
+$builtAt = (Get-Item $installerWin).LastWriteTimeUtc
+foreach ($in in $inputs) {
+    if (-not (Test-Path $in)) { continue }
+    if ((Get-Item $in).LastWriteTimeUtc -gt $builtAt) {
+        Write-Host "Refusing to deploy: $(Split-Path -Leaf $in) is still newer than the installer." -ForegroundColor Red
+        exit 1
+    }
 }
 
 $RemoteDir  = "/var/www/jawnston/downloads/jawnremote"

@@ -18,9 +18,11 @@
 # Usage:
 #   .\deploy-app.ps1
 #   .\deploy-app.ps1 -SshHost mygame
+#   .\deploy-app.ps1 -Rebuild        # force a fresh flutter build first
 
 param(
-    [string]$SshHost = "mygame"
+    [string]$SshHost = "mygame",
+    [switch]$Rebuild
 )
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -28,12 +30,57 @@ $repo      = Split-Path -Parent $scriptDir
 $flutter   = "C:\src\flutter\bin\flutter.bat"
 $apkWin    = Join-Path $repo "app\build\app\outputs\flutter-apk\app-release.apk"
 
-if (-not (Test-Path $apkWin)) {
-    Write-Host "Release APK missing - building it..." -ForegroundColor Yellow
+# Build when the APK is missing OR STALE - older than any app source. An earlier
+# version only built when it was *missing*, which silently shipped a stale APK:
+# the gamepad release sat undeployed because a pre-gamepad app-release.apk was
+# still on disk, so users kept downloading an app without the feature.
+$inputs = @((Join-Path $repo "app\pubspec.yaml"))
+foreach ($root in @("app\lib", "app\android", "app\assets")) {
+    $full = Join-Path $repo $root
+    if (-not (Test-Path $full)) { continue }
+    $inputs += (Get-ChildItem $full -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notlike "*\build\*" -and
+                       $_.FullName -notlike "*\.dart_tool\*" -and
+                       $_.FullName -notlike "*\.gradle\*" } |
+        ForEach-Object { $_.FullName })
+}
+
+$reason = ""
+if ($Rebuild) {
+    $reason = "-Rebuild requested"
+} elseif (-not (Test-Path $apkWin)) {
+    $reason = "release APK missing"
+} else {
+    $builtAt = (Get-Item $apkWin).LastWriteTimeUtc
+    foreach ($in in $inputs) {
+        if (-not (Test-Path $in)) { continue }
+        if ((Get-Item $in).LastWriteTimeUtc -gt $builtAt) {
+            $reason = "stale - $(Split-Path -Leaf $in) is newer than the built APK"
+            break
+        }
+    }
+}
+
+if ($reason -ne "") {
+    Write-Host "Building release APK ($reason)..." -ForegroundColor Yellow
     Push-Location (Join-Path $repo "app")
     & $flutter build apk --release | Out-Null
+    $buildRc = $LASTEXITCODE
     Pop-Location
-    if (-not (Test-Path $apkWin)) { Write-Host "Build failed" -ForegroundColor Red; exit 1 }
+    # Test-Path alone is not enough: a stale APK from an earlier build would
+    # still be sitting there and would sail through the check.
+    if ($buildRc -ne 0) { Write-Host "flutter build failed (exit $buildRc)" -ForegroundColor Red; exit 1 }
+    if (-not (Test-Path $apkWin)) { Write-Host "Build produced no APK" -ForegroundColor Red; exit 1 }
+}
+
+# Belt and braces: refuse to upload if the APK is somehow still older than a source.
+$builtAt = (Get-Item $apkWin).LastWriteTimeUtc
+foreach ($in in $inputs) {
+    if (-not (Test-Path $in)) { continue }
+    if ((Get-Item $in).LastWriteTimeUtc -gt $builtAt) {
+        Write-Host "Refusing to deploy: $(Split-Path -Leaf $in) is still newer than the APK." -ForegroundColor Red
+        exit 1
+    }
 }
 
 $RemoteDir  = "/var/www/jawnston/downloads/jawnremote"
