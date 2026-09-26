@@ -22,9 +22,11 @@ import base64
 import hashlib
 import os
 import re
+import shutil
 
 CHUNK = 64 * 1024              # raw bytes per chunk (~88 KB of base64 per line)
 MAX_FILE_BYTES = 2 * 1024 ** 3  # 2 GB safety cap on inbound files
+FREE_MARGIN = 64 * 1024 ** 2    # disk space to leave free beyond an inbound file
 ACK_WINDOW = 8                 # max in-flight (unacked) chunks while sending
 
 _BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -65,7 +67,17 @@ class Incoming:
     def __init__(self, msg):
         self.id = msg.get("id")
         self.size = int(msg.get("size", 0) or 0)
+        # Refuse up front what can't fit, instead of failing minutes in.
+        if self.size > MAX_FILE_BYTES:
+            raise ValueError("That file is too big (2 GB max)")
         self.final = safe_target(msg.get("name", "file"))
+        if self.size:
+            try:
+                free = shutil.disk_usage(os.path.dirname(self.final)).free
+            except OSError:
+                free = None
+            if free is not None and free < self.size + FREE_MARGIN:
+                raise OSError("Not enough free space on the PC")
         self.part = self.final + ".part"
         self.next_i = 0
         self.written = 0
@@ -78,7 +90,7 @@ class Incoming:
         data = base64.b64decode(b64)  # raises binascii.Error (a ValueError) if bad
         self.written += len(data)
         if self.written > MAX_FILE_BYTES:
-            raise ValueError("file exceeds size cap")
+            raise ValueError("That file is too big (2 GB max)")
         self._f.write(data)
         self._h.update(data)
         self.next_i += 1

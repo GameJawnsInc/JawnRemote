@@ -14,6 +14,7 @@ Zero external dependencies -- just run with Python 3.
 """
 import argparse
 import base64
+import errno
 import ipaddress
 import itertools
 import json
@@ -111,6 +112,13 @@ def load_or_create_pin(override=None):
     return pin
 
 
+def _xfer_err(e):
+    """User-facing text for a failed inbound file (sent back to the phone)."""
+    if getattr(e, "errno", None) == errno.ENOSPC:
+        return "The PC's disk is full"
+    return str(e)
+
+
 class Handler(socketserver.StreamRequestHandler):
     def setup(self):
         super().setup()
@@ -124,9 +132,12 @@ class Handler(socketserver.StreamRequestHandler):
         self._incoming = None           # in-progress inbound file (phone -> PC)
         self._wlock = threading.Lock()  # serialize writes (read-loop vs GUI push)
         self._send_cv = threading.Condition()  # outbound push ack signaling
+        self._push_lock = threading.Lock()     # one GUI -> phone push at a time
+        self._send_id = None            # id of the push acks/filedone must match
         self._send_acked = 0
         self._send_stop = False
         self._send_done = None
+        self._closed = False            # socket gone: wakes a push to fail fast
 
     def send(self, obj):
         data = (json.dumps(obj) + "\n").encode("utf-8")
@@ -165,6 +176,8 @@ class Handler(socketserver.StreamRequestHandler):
                 web_remote.serve(self, first, log=log)
             except (ConnectionError, OSError):
                 pass
+            finally:
+                self._release_held()     # the page's input runs on this Handler
             return
         # App path: long-lived. The app pings every ~4s, so a generous idle
         # timeout reaps a dead/abandoned connection (zombie) without ever
@@ -191,16 +204,46 @@ class Handler(socketserver.StreamRequestHandler):
         except (ConnectionError, OSError):
             pass
         finally:
+            self._release_held()
+            # An upload cut off by the drop would otherwise leave a .part file
+            # behind (the app never resumes; it retries from scratch).
+            inc, self._incoming = self._incoming, None
+            if inc:
+                try:
+                    inc.abort()
+                except Exception:
+                    pass
+                log("    incomplete upload discarded")
+            # Wake a GUI push waiting on this connection so it fails now
+            # instead of sitting out its ack timeout.
+            with self._send_cv:
+                self._closed = True
+                self._send_cv.notify_all()
             # Failsafe: if this connection drove a virtual gamepad, release all
-            # inputs and unplug it the moment the socket drops or is reaped --
-            # otherwise a held stick/button stays held (character runs forever).
+            # inputs the moment the socket drops or is reaped -- otherwise a
+            # held stick/button stays held (character runs forever). The pad
+            # unplugs after a short grace unless a reconnect picks it back up,
+            # and is left alone if a newer connection drives it by now.
             if self._pad_active:
-                pad.unplug()
+                pad.release(self)
                 self._pad_active = False
             self.server.unregister_client(self)
             log(f"[-] {peer} disconnected")
-            if self._who:
+            if self._who is not None:
                 self.server.on_event("disconnected", self._who)
+
+    def _release_held(self):
+        """Failsafe: let go of any mouse button this connection pressed and
+        never released (the link dropped mid-drag). A button another
+        connection has pressed since is left alone, so its drag isn't cut."""
+        with self.server.btn_lock:
+            for b, h in list(self.server.btn_holder.items()):
+                if h is self:
+                    del self.server.btn_holder[b]
+                    try:
+                        inp.mouse_up(b)
+                    except Exception:
+                        pass
 
     def _auth_locked(self, peer):
         with self.server.auth_lock:
@@ -230,20 +273,29 @@ class Handler(socketserver.StreamRequestHandler):
                 return {"t": "welcome", "ok": False, "err": "locked"}
             ok = (not self.server.require_auth) or \
                  (str(msg.get("pin", "")) == self.server.pin)
-            who = msg.get("name", "device")
+            who = str(msg.get("name") or "device")
             if not ok:
                 self._record_auth_fail(peer)
                 log(f"    hello from {who!r} @ {peer}: BAD PIN")
                 return {"t": "welcome", "ok": False, "err": "bad_pin"}
             self._record_auth_ok(peer)
             self.authed = True
-            self._who = who
             self.server.register_client(self)
             log(f"    hello from {who!r} @ {peer}: OK")
-            self.server.on_event("connected", who)
+            # One "connected" per connection, paired with the "disconnected"
+            # in handle()'s finally -- a repeated hello must not add another.
+            if self._who is None:
+                self._who = who
+                self.server.on_event("connected", who)
+            # The MAC of the adapter the phone actually reached us on (right
+            # for Wake-on-LAN even with a VPN / virtual adapter present).
+            try:
+                mac = netinfo.mac_for_ip(self.connection.getsockname()[0])
+            except Exception:
+                mac = ""
             return {"t": "welcome", "ok": True, "server": self.server.server_name,
                     "app": APP, "v": VERSION,
-                    "mac": getattr(self.server, "mac", "")}
+                    "mac": mac or getattr(self.server, "mac", "")}
         if t == "ping":
             return {"t": "pong"}
         if not self.authed:
@@ -267,7 +319,7 @@ class Handler(socketserver.StreamRequestHandler):
                 log(f"    shot error: {e!r}")
                 return {"t": "shot", "err": True}
         if t == "padconnect":
-            ok = pad.plug()
+            ok = pad.plug(owner=self)
             if ok:
                 self._pad_active = True
                 log("    gamepad: virtual pad plugged in")
@@ -287,12 +339,21 @@ class Handler(socketserver.StreamRequestHandler):
     def do_input(self, t, msg):
         if t == "m":
             inp.move(int(msg.get("x", 0)), int(msg.get("y", 0)))
-        elif t == "click":
-            inp.click(msg.get("b", "left"))
-        elif t == "down":
-            inp.mouse_down(msg.get("b", "left"))
-        elif t == "up":
-            inp.mouse_up(msg.get("b", "left"))
+        elif t in ("click", "down", "up"):
+            b = msg.get("b", "left")
+            b = b if b in ("left", "right", "middle") else "left"
+            # Remember who holds a pressed button so a connection that drops
+            # mid-drag can release it (see _release_held).
+            with self.server.btn_lock:
+                if t == "down":
+                    inp.mouse_down(b)
+                    self.server.btn_holder[b] = self
+                elif t == "up":
+                    inp.mouse_up(b)
+                    self.server.btn_holder.pop(b, None)
+                else:                   # a click leaves the button up too
+                    inp.click(b)
+                    self.server.btn_holder.pop(b, None)
         elif t == "scroll":
             inp.scroll(dy=int(msg.get("y", 0)), dx=int(msg.get("x", 0)))
         elif t == "text":
@@ -311,6 +372,8 @@ class Handler(socketserver.StreamRequestHandler):
             target = msg.get("target", "")
             if lch.launch(target):
                 log(f"    launch: {target}")
+            else:
+                log(f"    launch failed (not found?): {target}")
         elif t == "clipset":
             s = msg.get("s", "")
             if isinstance(s, str) and clip.set_text(s):
@@ -318,7 +381,7 @@ class Handler(socketserver.StreamRequestHandler):
         elif t == "pad":
             # Stateful: holds until the next state. apply_msg auto-plugs if a
             # padconnect was missed, so mark the connection for failsafe cleanup.
-            if pad.apply_msg(msg):
+            if pad.apply_msg(msg, owner=self):
                 self._pad_active = True
         elif t == "paddisconnect":
             pad.unplug()
@@ -336,12 +399,13 @@ class Handler(socketserver.StreamRequestHandler):
             try:
                 self._incoming = fx.Incoming(msg)
             except (OSError, ValueError) as e:
-                return {"t": "filedone", "id": fid, "ok": False, "err": str(e)}
+                return {"t": "filedone", "id": fid, "ok": False, "err": _xfer_err(e)}
             return {"t": "fileack", "id": fid, "i": -1}
         if t == "filedat":
             inc = self._incoming
             if not inc or inc.id != fid:
-                return {"t": "filedone", "id": fid, "ok": False, "err": "no transfer"}
+                return {"t": "filedone", "id": fid, "ok": False,
+                        "err": "Transfer interrupted — try again"}
             try:
                 i = int(msg.get("i", -1))
                 inc.write_chunk(i, msg.get("b", ""))
@@ -349,11 +413,12 @@ class Handler(socketserver.StreamRequestHandler):
             except (OSError, ValueError) as e:
                 inc.abort()
                 self._incoming = None
-                return {"t": "filedone", "id": fid, "ok": False, "err": str(e)}
+                return {"t": "filedone", "id": fid, "ok": False, "err": _xfer_err(e)}
         if t == "fileend":
             inc = self._incoming
             if not inc or inc.id != fid:
-                return {"t": "filedone", "id": fid, "ok": False, "err": "no transfer"}
+                return {"t": "filedone", "id": fid, "ok": False,
+                        "err": "Transfer interrupted — try again"}
             try:
                 path = inc.finish(msg.get("sha"))
                 self._incoming = None
@@ -363,7 +428,7 @@ class Handler(socketserver.StreamRequestHandler):
             except (OSError, ValueError) as e:
                 inc.abort()
                 self._incoming = None
-                return {"t": "filedone", "id": fid, "ok": False, "err": str(e)}
+                return {"t": "filedone", "id": fid, "ok": False, "err": _xfer_err(e)}
         if t == "fileabort":
             if self._incoming:
                 self._incoming.abort()
@@ -371,11 +436,15 @@ class Handler(socketserver.StreamRequestHandler):
             return None
         if t == "fileack":          # ack for a file WE are pushing to the phone
             with self._send_cv:
+                if fid != self._send_id:    # a stale/other transfer's ack
+                    return None
                 self._send_acked = max(self._send_acked, int(msg.get("i", -1)) + 1)
                 self._send_cv.notify_all()
             return None
         if t == "filedone":         # phone finished receiving our pushed file
             with self._send_cv:
+                if fid != self._send_id:
+                    return None
                 self._send_done = msg
                 self._send_cv.notify_all()
             return None
@@ -384,27 +453,49 @@ class Handler(socketserver.StreamRequestHandler):
     def push_file(self, path, progress=None):
         """Send a local file to this connected phone (GUI -> phone). Runs on a
         worker thread; a small ack window keeps us from outrunning the phone and
-        keeps the link's inbound side busy so the heartbeat won't trip."""
+        keeps the link's inbound side busy so the heartbeat won't trip.
+        Returns (ok, err): err is a short reason for the GUI, or None if the
+        push was stopped. One push at a time per connection."""
+        if not self._push_lock.acquire(blocking=False):
+            return False, "already sending a file"
+        try:
+            return self._push_file(path, progress)
+        finally:
+            self._push_lock.release()
+
+    def _push_file(self, path, progress):
         fid = secrets.token_hex(6)
         with self._send_cv:
+            if self._closed:
+                return False, "phone disconnected"
+            self._send_id = fid
             self._send_acked = 0
             self._send_stop = False
             self._send_done = None
         try:
             size = os.path.getsize(path)
         except OSError:
-            return False
+            return False, "couldn't read the file"
         total = max(1, (size + fx.CHUNK - 1) // fx.CHUNK)
         try:
             for frame in fx.iter_send_frames(path, fid):
                 if frame["t"] == "filedat":
                     with self._send_cv:
+                        # Also stop waiting the moment the phone drops or gives
+                        # up (an early filedone ok:false) -- no 20 s hang.
                         while (frame["i"] - self._send_acked) >= fx.ACK_WINDOW \
-                                and not self._send_stop:
+                                and not self._send_stop and not self._closed \
+                                and self._send_done is None:
                             if not self._send_cv.wait(timeout=20):
-                                raise OSError("phone stopped acknowledging")
-                        if self._send_stop:
-                            return False
+                                raise TimeoutError("phone stopped acknowledging")
+                        closed = self._closed
+                        failed = self._send_done is not None
+                        stopped = self._send_stop
+                    if closed:
+                        return False, "phone disconnected"
+                    if failed or stopped:
+                        self.send({"t": "fileabort", "id": fid})
+                        return False, "the phone couldn't save it" if failed else None
                     if progress:
                         try:
                             progress(frame["i"] + 1, total)
@@ -416,19 +507,31 @@ class Handler(socketserver.StreamRequestHandler):
             # single `if ... wait` gets woken early by a trailing ack with
             # _send_done still None -> spurious False. That surfaced as
             # "Couldn't send (is the app open?)" even though the file arrived.
-            # Loop on the real condition until filedone or a true timeout.
+            # Loop on the real condition until filedone, a drop or a true timeout.
             deadline = time.monotonic() + 20
             with self._send_cv:
-                while self._send_done is None:
+                while self._send_done is None and not self._closed:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
                     self._send_cv.wait(timeout=remaining)
                 done = self._send_done
-            return bool(done and done.get("ok"))
+                closed = self._closed
+            if done is not None:
+                if done.get("ok"):
+                    return True, None
+                return False, "the phone couldn't save it"
+            if closed:
+                return False, "phone disconnected"
+            return False, "no reply from the phone"
         except (OSError, ValueError) as e:
             log(f"    push_file error: {e!r}")
-            return False
+            if self._closed:
+                return False, "phone disconnected"
+            self.send({"t": "fileabort", "id": fid})
+            if isinstance(e, TimeoutError):
+                return False, "phone stopped responding"
+            return False, "couldn't read the file"
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -468,13 +571,28 @@ def discovery_loop(port, server_name, stop):
     s.settimeout(1.0)
     reply = json.dumps({"t": "server", "name": server_name, "app": APP,
                         "v": VERSION, "port": port}).encode("utf-8")
+    errors = 0
     while not stop.is_set():
         try:
             data, addr = s.recvfrom(2048)
         except socket.timeout:
             continue
-        except OSError:
-            break
+        except ConnectionResetError:
+            # Windows (WSAECONNRESET): an earlier reply hit a phone socket that
+            # had already closed. Only that ICMP echo -- the socket is fine.
+            continue
+        except OSError as e:
+            if stop.is_set():
+                break
+            errors += 1
+            if errors >= 30:            # truly dead socket: don't spin forever
+                log(f"    (discovery responder stopped: {e})")
+                break
+            if errors == 1:
+                log(f"    (discovery recv error: {e})")
+            time.sleep(1.0)
+            continue
+        errors = 0
         if b"discover" in data.lower() and is_lan_ip(addr[0]):
             try:
                 s.sendto(reply, addr)
@@ -516,6 +634,8 @@ def build_server(port=DEFAULT_PORT, host="0.0.0.0", pin="", require_auth=True,
     server.bans = {}    # peer ip -> unix time the lockout expires
     server.clients = []  # authed Handlers (most recent last) for GUI->phone push
     server.clients_lock = threading.Lock()
+    server.btn_holder = {}  # mouse button -> Handler that pressed it (not yet up)
+    server.btn_lock = threading.Lock()
     try:
         ips = get_lan_ips()
         server.mac = netinfo.get_primary_mac(ips[0] if ips else None)

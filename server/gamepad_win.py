@@ -35,6 +35,12 @@ BUTTON_BITS = {
 _S16_MIN, _S16_MAX = -32768, 32767
 VIGEM_ERROR_NONE = 0x20000000
 
+# When the connection driving the pad drops, its inputs are released at once
+# but the pad stays plugged this long, so a phone that reconnects after a
+# Wi-Fi blip picks the same controller back up instead of the game pausing on
+# "controller disconnected".
+RELEASE_GRACE = 10.0
+
 
 class _XUSBReport(ctypes.Structure):
     """Mirrors ViGEm's XUSB_REPORT (== XInput XINPUT_GAMEPAD layout)."""
@@ -93,6 +99,8 @@ class _Pad:
         self._target = None     # PVIGEM_TARGET (x360)
         self._tried_load = False
         self._error = None
+        self._owner = None          # connection currently driving the pad
+        self._unplug_timer = None   # pending grace-period unplug (see release)
 
     # ---- DLL loading -----------------------------------------------------
     def _load_dll(self):
@@ -137,9 +145,21 @@ class _Pad:
         with self._lock:
             return self._load_dll()
 
-    def plug(self):
+    def _cancel_timer(self):
+        if self._unplug_timer is not None:
+            self._unplug_timer.cancel()
+            self._unplug_timer = None
+
+    def _claim(self, owner):
+        """`owner` (a connection) drives the pad now: cancel a pending unplug."""
+        if owner is not None:
+            self._owner = owner
+            self._cancel_timer()
+
+    def plug(self, owner=None):
         """Create + plug in the virtual pad. Idempotent. True if one is live."""
         with self._lock:
+            self._claim(owner)
             if self._target is not None:
                 return True
             if not self._load_dll():
@@ -178,8 +198,9 @@ class _Pad:
         except OSError:
             return False
 
-    def apply(self, buttons=0, lt=0, rt=0, lx=0, ly=0, rx=0, ry=0):
+    def apply(self, buttons=0, lt=0, rt=0, lx=0, ly=0, rx=0, ry=0, owner=None):
         with self._lock:
+            self._claim(owner)
             if self._target is None:
                 # Auto-plug on first state so a `pad` message works even if an
                 # explicit padconnect was missed or raced.
@@ -200,8 +221,36 @@ class _Pad:
         with self._lock:
             return self._update(_XUSBReport())
 
+    def release(self, owner, grace=RELEASE_GRACE):
+        """Failsafe for a dropped connection: release every input now, then
+        unplug after `grace` seconds unless a connection claims the pad again
+        (padconnect or a pad frame). No-op if another connection drives it."""
+        with self._lock:
+            if self._owner is not None and self._owner is not owner:
+                return
+            self._owner = None
+            if self._target is None:
+                return
+            self._update(_XUSBReport())
+            self._cancel_timer()
+            t = threading.Timer(grace, self._grace_expired)
+            t.daemon = True
+            self._unplug_timer = t
+            t.start()
+
+    def _grace_expired(self):
+        with self._lock:
+            # Only the current timer, and only if nobody reclaimed the pad
+            # while it waited (a cancel can lose the race with the firing).
+            if threading.current_thread() is self._unplug_timer \
+                    and self._owner is None:
+                self._unplug_timer = None
+                self.unplug()
+
     def unplug(self):
         with self._lock:
+            self._cancel_timer()
+            self._owner = None
             if self._target is not None:
                 try:
                     self._update(_XUSBReport())     # release before unplug
@@ -224,8 +273,12 @@ def available():
     return _pad.available()
 
 
-def plug():
-    return _pad.plug()
+def plug(owner=None):
+    return _pad.plug(owner)
+
+
+def release(owner, grace=RELEASE_GRACE):
+    return _pad.release(owner, grace)
 
 
 def unplug():
@@ -245,10 +298,11 @@ def last_error():
     return _pad.last_error()
 
 
-def apply_msg(msg):
+def apply_msg(msg, owner=None):
     """Apply one wire `pad` message. `b` may be an int bitmask or a list of
     button names; sticks (lx/ly/rx/ry, int16) and triggers (lt/rt, 0-255) are
-    clamped. Returns True if the pad accepted the state."""
+    clamped. `owner` (the sending connection) claims the pad. Returns True if
+    the pad accepted the state."""
     b = msg.get("b", 0)
     buttons = buttons_from_names(b) if isinstance(b, (list, tuple)) else (
         int(b) if isinstance(b, (int, float)) else 0)
@@ -262,4 +316,5 @@ def apply_msg(msg):
             return 0
 
     return _pad.apply(buttons=buttons, lt=num("lt"), rt=num("rt"),
-                      lx=num("lx"), ly=num("ly"), rx=num("rx"), ry=num("ry"))
+                      lx=num("lx"), ly=num("ly"), rx=num("rx"), ry=num("ry"),
+                      owner=owner)
