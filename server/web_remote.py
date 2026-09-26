@@ -189,6 +189,16 @@ def _ws_loop(handler, log=print):
             frame = _ws_recv(handler.rfile)
             if frame is None:
                 break
+            # "Allow browser remote" unticked in the GUI -> drop live pages too,
+            # not just new ones. A connected page pings every 4 s, so it's cut
+            # off within one ping; tell it why so it can show the user.
+            if not getattr(srv, "web_enabled", True):
+                if authed:
+                    _ws_send(handler, {"t": "bye", "err": "web_off"})
+                    _ws_send_frame(handler, 0x8, struct.pack("!H", 1008) +
+                                   b"Browser remote is off")
+                    log(f"    browser @ {peer}: closed (browser remote turned off)")
+                break
             opcode, payload = frame
             if opcode == 0x8:                       # close
                 break
@@ -281,7 +291,9 @@ PAGE = r"""<!doctype html>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font-family:'Segoe UI',system-ui,Arial,sans-serif;overscroll-behavior:none}
-  body{display:flex;flex-direction:column;height:100dvh}
+  body{display:flex;flex-direction:column;height:100dvh;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  input,textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
   header{display:flex;align-items:center;gap:10px;padding:12px 16px;flex:none;
     border-bottom:1px solid #ffffff14;font-weight:600}
   #dot{width:10px;height:10px;border-radius:50%;background:var(--amber);flex:none}
@@ -324,7 +336,7 @@ PAGE = r"""<!doctype html>
     border-radius:12px;background:var(--card);color:var(--ink);font-size:15px;
     font-weight:600;text-align:left;cursor:pointer;touch-action:manipulation;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .app:active{background:#1F2733}
+  .app:active,.app.sent{background:#1F2733}
   .hint{color:var(--muted);font-size:13px;text-align:center;padding:16px}
   nav#tabs{display:flex;flex:none;border-top:1px solid #ffffff14}
   .tab{flex:1;padding:13px 2px;background:none;border:none;color:var(--muted);
@@ -339,11 +351,12 @@ PAGE = r"""<!doctype html>
     border-radius:12px;border:1px solid #ffffff1f;background:var(--card);color:var(--ink)}
   #go{padding:14px 28px;border:none;border-radius:12px;background:var(--accent);
     color:#08101f;font-weight:700;font-size:16px;cursor:pointer}
-  #msg{color:var(--amber);min-height:1.2em}
+  #msg{color:var(--amber);min-height:1.2em;text-align:center}
   #shot{position:fixed;inset:0;z-index:20;background:#000;display:flex;flex-direction:column}
   #shotstage{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none}
   #shotimg{position:absolute;left:0;top:0;transform-origin:0 0;
-    will-change:transform;user-select:none;-webkit-user-select:none;-webkit-user-drag:none}
+    will-change:transform;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;
+    pointer-events:none;-webkit-touch-callout:none}
   #shotmsg{position:absolute;top:50%;left:0;right:0;transform:translateY(-50%);
     text-align:center;color:var(--muted)}
   #shotbar{flex:none;display:flex;gap:8px;padding:10px;background:var(--bg);
@@ -357,6 +370,15 @@ PAGE = r"""<!doctype html>
     background:var(--card);color:var(--ink);font-size:13px;white-space:nowrap;
     cursor:pointer}
   #shotdisp .chip.on{background:var(--accent);color:#08101f;font-weight:600}
+  /* landscape phone: slimmer bars, click buttons beside the pad instead of below */
+  @media (max-height:500px){
+    header{padding:6px 16px}
+    .tab{padding:8px 2px}
+    #pad{min-height:0}
+    .panel[data-panel=touch]{flex-direction:row}
+    .panel[data-panel=touch] .row{flex:0 0 28%;flex-direction:column}
+    .panel[data-panel=touch] .row .btn{flex:1}
+  }
   .hidden{display:none!important}
 </style>
 </head>
@@ -493,56 +515,108 @@ PAGE = r"""<!doctype html>
 (function(){
   var MOVE=1.5, SCROLL=3;            // sensitivity
   var ws=null, ready=false, pin="", appsLoaded=false;
+  var typedPin=false;      // pin came from the Connect button (not QR/saved), not yet accepted
+  var webOff=false;        // PC unticked "Allow browser remote"; cleared by the next welcome
+  var lastRx=0, shotPending=0;       // liveness: last message time; big shots still on their way
+  var OFF_MSG='The browser remote was turned off on the PC.';
   var dot=document.getElementById('dot'), title=document.getElementById('title');
   var login=document.getElementById('login'), msg=document.getElementById('msg');
 
   function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
 
+  var retryT=null, retryMs=800;
+  // Detach + close the current socket so a stale one can never touch shared
+  // state (ready, retry) or orphan its replacement.
+  function retire(){ if(!ws) return; var o=ws; ws=null;
+    o.onopen=o.onmessage=o.onclose=o.onerror=null; try{o.close();}catch(e){} }
+  function showOff(){ webOff=true; ready=false; dot.classList.remove('on');
+    if(shotOpen) closeShot();
+    login.classList.remove('hidden'); msg.textContent=OFF_MSG; }
+
   function connect(){
+    if(retryT){ clearTimeout(retryT); retryT=null; }
+    retire(); ready=false; shotPending=0;
     title.textContent="Connecting…"; dot.classList.remove('on');
+    if(!login.classList.contains('hidden') && !msg.textContent) msg.textContent='Connecting…';
     var proto = location.protocol==='https:' ? 'wss://' : 'ws://';
-    try { ws = new WebSocket(proto+location.host+'/ws'); }
+    var s;
+    try { s = new WebSocket(proto+location.host+'/ws'); }
     catch(e){ retry(); return; }
-    ws.onopen=function(){ send({t:'hello',pin:pin,name:'Browser'}); };
-    ws.onmessage=function(ev){
+    ws=s;
+    s.onopen=function(){ if(s===ws) send({t:'hello',pin:pin,name:'Browser'}); };
+    s.onmessage=function(ev){
+      if(s!==ws) return;
+      lastRx=Date.now();
       var m; try{ m=JSON.parse(ev.data);}catch(e){return;}
       if(m.t==='welcome'){
-        if(m.ok){ ready=true; retryMs=800; login.classList.add('hidden');
+        webOff=false;
+        if(m.ok){ ready=true; retryMs=800; typedPin=false; login.classList.add('hidden');
+          msg.textContent='';
           dot.classList.add('on'); title.textContent=m.server||'Connected';
           try{ localStorage.setItem('jr_pin', pin); }catch(e){}   // remember for reconnect
           send({t:'displays'}); }
-        else { ready=false; login.classList.remove('hidden');
+        else {
+          // Rejected: close this socket and don't auto-retry -- resending a bad
+          // PIN in the background only burns the lockout budget.
+          var stale=!typedPin;
+          retire(); ready=false; pin='';
+          if(retryT){ clearTimeout(retryT); retryT=null; }
+          if(shotOpen) closeShot();
+          dot.classList.remove('on'); login.classList.remove('hidden');
           if(m.err!=='locked'){ try{ localStorage.removeItem('jr_pin'); }catch(e){} }
           msg.textContent = m.err==='locked'
-            ? 'Too many tries — wait a minute.' : 'Wrong PIN.'; }
+            ? 'Too many tries — wait a minute, then tap Connect.'
+            : stale ? 'That PIN no longer works — enter the one shown on the PC.'
+            : 'Wrong PIN.'; }
+      } else if(m.t==='bye'){
+        showOff();          // server closes next (1008); onclose keeps retrying
       } else if(m.t==='clip'){
-        document.getElementById('clipbox').value = m.s||'';
+        var cb=document.getElementById('clipbox'), gb=document.getElementById('clipgetb');
+        if(m.s){ cb.value=m.s; flash(gb,'Got it ✓'); }
+        else flash(gb,'No text on PC');     // short: a 2-line label would jolt the panel
       } else if(m.t==='apps'){
         renderApps(m.apps||[]);
       } else if(m.t==='displays'){
         onDisplays(m.list||[]);
       } else if(m.t==='shot'){
+        if(shotPending) shotPending--;
         onShot(m);
       }
     };
-    ws.onclose=function(){ ready=false; dot.classList.remove('on');
-      if(login.classList.contains('hidden')) title.textContent='Reconnecting…';
+    s.onclose=function(ev){ if(s!==ws) return; ws=null; ready=false; dot.classList.remove('on');
+      if(ev&&ev.code===1008) showOff();
+      else if(login.classList.contains('hidden')) title.textContent='Reconnecting…';
+      else if(pin) msg.textContent = webOff ? OFF_MSG : 'Can’t reach the PC — retrying…';
       retry(); };
-    ws.onerror=function(){ try{ws.close();}catch(e){} };
+    s.onerror=function(){ try{s.close();}catch(e){} };
   }
-  var retryT=null, retryMs=800;
   function retry(){ if(retryT)return; retryT=setTimeout(function(){retryT=null;
     if(pin) connect();}, retryMs);
     retryMs=Math.min(Math.round(retryMs*1.6), 8000); }   // back off, don't hammer
 
   document.getElementById('go').onclick=function(){
     pin=document.getElementById('pin').value.trim(); msg.textContent='';
+    typedPin=true;
     if(pin) connect();
   };
   document.getElementById('pin').addEventListener('keydown',function(e){
     if(e.key==='Enter') document.getElementById('go').click(); });
 
-  setInterval(function(){ if(ready) send({t:'ping'}); }, 4000);
+  // Liveness: a PC that sleeps or drops off Wi-Fi never closes the socket, so
+  // treat ~12 s of silence (pongs stop) as dead. A Quick View shot can take a
+  // while to arrive and holds up the pongs behind it, so give it longer.
+  // (Not judged while hidden: background timers are throttled; wake() checks.)
+  setInterval(function(){ if(!ready) return;
+    if(!document.hidden && Date.now()-lastRx > (shotPending?45000:12000)){
+      retryMs=800; connect(); title.textContent='Reconnecting…'; return; }
+    send({t:'ping'}); }, 4000);
+  // Back from the background / network: check at once instead of waiting out
+  // the backoff. Time spent frozen doesn't count as silence.
+  function wake(){ lastRx=Date.now();
+    if(ready) send({t:'ping'});
+    else if(pin && !(ws && ws.readyState<=1)){ retryMs=800; connect(); } }
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) wake(); });
+  window.addEventListener('online',wake);
 
   // ---- tabs ----
   function showTab(name){
@@ -550,7 +624,7 @@ PAGE = r"""<!doctype html>
       b.classList.toggle('on', b.dataset.tab===name); });
     Array.prototype.forEach.call(document.querySelectorAll('.panel'),function(p){
       p.classList.toggle('on', p.dataset.panel===name); });
-    if(name!=='keys'){ var a=document.activeElement; if(a&&a.blur) a.blur(); }
+    if(name!=='keys'){ var a=document.activeElement; if(a&&a.blur) a.blur(); resetTyper(); }
     if(name==='apps' && !appsLoaded) send({t:'getapps'});
   }
   Array.prototype.forEach.call(document.querySelectorAll('.tab'),function(b){
@@ -559,22 +633,31 @@ PAGE = r"""<!doctype html>
 
   // ---- modifiers (one-shot, applied to the next key/letter) ----
   var armed=[];
+  // Was the type box focused before this tap took focus? Only then refocus it,
+  // so a key/mod button doesn't pop the on-screen keyboard up by itself.
+  var wasTyping=false;
+  function noteTyping(){ wasTyping=(document.activeElement===typer); }
+  function refocus(){ if(wasTyping) typer.focus(); wasTyping=false; }
   function clearMods(){ armed=[];
     Array.prototype.forEach.call(document.querySelectorAll('.mod'),function(b){
       b.classList.remove('on'); }); }
   Array.prototype.forEach.call(document.querySelectorAll('.mod'),function(b){
+    b.addEventListener('pointerdown',noteTyping);
     b.addEventListener('click',function(){
       var m=b.dataset.mod, i=armed.indexOf(m);
       if(i>=0){ armed.splice(i,1); b.classList.remove('on'); }
       else { armed.push(m); b.classList.add('on'); }
+      refocus();
     });
   });
   function sendKey(k){ send({t:'key',k:k,m:armed.slice()}); if(armed.length) clearMods(); }
 
   // ---- trackpad ----
   var pad=document.getElementById('pad');
-  var pts={}, n=0, maxN=0, moved=false, startT=0, sx=0, sy=0;
+  var pts={}, n=0, maxN=0, moved=false, startT=0, sx=0, sy=0, travel=0;
+  var ax=0, ay=0, scy=0;       // sub-pixel remainders carried between events
   var lastUp=0, lux=0, luy=0, holding=false;
+  function trunc(v){ return v<0?Math.ceil(v):Math.floor(v); }
   function avgMove(e){
     var p=pts[e.pointerId]; if(!p) return {dx:0,dy:0};
     var dx=e.clientX-p.x, dy=e.clientY-p.y; p.x=e.clientX; p.y=e.clientY;
@@ -585,6 +668,7 @@ PAGE = r"""<!doctype html>
     pts[e.pointerId]={x:e.clientX,y:e.clientY}; n++;
     if(n===1){
       maxN=1; moved=false; startT=Date.now(); sx=e.clientX; sy=e.clientY;
+      travel=0; ax=ay=scy=0;
       // double-tap-and-hold: a quick 2nd tap near the 1st holds the left button
       // (the OS reads it as double-click-drag -> select text / move windows)
       if(Date.now()-lastUp<300 && Math.hypot(e.clientX-lux,e.clientY-luy)<30){
@@ -597,13 +681,23 @@ PAGE = r"""<!doctype html>
   });
   pad.addEventListener('pointermove',function(e){
     if(!pts[e.pointerId]||!ready) return;
-    var d=avgMove(e);
-    if(Math.abs(d.dx)>2||Math.abs(d.dy)>2) moved=true;
-    if(n>=2){ if(d.dy) send({t:'scroll',y:Math.round(-d.dy*SCROLL)}); }
-    else { if(d.dx||d.dy) send({t:'m',x:Math.round(d.dx*MOVE),y:Math.round(d.dy*MOVE)}); }
+    var d=avgMove(e), dist=Math.hypot(d.dx,d.dy);
+    // total travel, not per-event: slow nudges arrive as many tiny deltas
+    travel+=dist; if(travel>=12) moved=true;
+    if(n>=2){
+      scy+=-d.dy*SCROLL; var wy=trunc(scy);
+      if(wy){ send({t:'scroll',y:wy}); scy-=wy; }
+    } else if(maxN===1){        // not the last finger of a two-finger scroll
+      // same acceleration as the app: faster swipes cover more screen
+      var acc=Math.min(2.5,1+dist*0.03);
+      ax+=d.dx*MOVE*acc; ay+=d.dy*MOVE*acc;
+      var ix=trunc(ax), iy=trunc(ay);
+      if(ix||iy){ send({t:'m',x:ix,y:iy}); ax-=ix; ay-=iy; }
+    }
     e.preventDefault();
   });
   function up(e){
+    if(e.type==='pointercancel') moved=true;     // a cancelled touch never clicks
     if(pts[e.pointerId]){ delete pts[e.pointerId]; n=Math.max(0,n-1); }
     if(n===0){
       var quick=Date.now()-startT<300;
@@ -623,19 +717,40 @@ PAGE = r"""<!doctype html>
   document.getElementById('rclick').onclick=function(){ send({t:'click',b:'right'}); };
 
   // ---- typing ----
-  var typer=document.getElementById('typer');
-  typer.addEventListener('input',function(e){
-    if(e.inputType&&e.inputType.indexOf('delete')===0){ send({t:'key',k:'backspace'}); }
-    else if(e.data){
-      if(armed.length && e.data.length===1) sendKey(e.data);
-      else send({t:'text',s:e.data});
+  // The box keeps what was typed (until Enter / 160 chars) and each change is
+  // diffed against the last one, like the app's keyboard bar. The keyboard's
+  // IME then has its context (auto-space after swiped words, suggestions),
+  // and composition, voice typing and paste each arrive once, intact.
+  var typer=document.getElementById('typer'), prev='';
+  function resetTyper(){ typer.value=''; prev=''; }
+  typer.addEventListener('input',function(){
+    var v=typer.value, a=prev, min=Math.min(v.length,a.length), cp=0;
+    while(cp<min && v.charAt(cp)===a.charAt(cp)) cp++;
+    if(cp && /[\uD800-\uDBFF]/.test(v.charAt(cp-1))) cp--;          // never split an emoji
+    // The PC's caret sits at the end of what was sent, so undo everything after
+    // the first difference and retype the rest. (Keeping a common tail would be
+    // wrong there: autocorrect "recieve" -> "receive" would leave "recieei".)
+    var removed=a.substring(cp).replace(/[\uDC00-\uDFFF]/g,'').length,   // chars, not UTF-16 units
+        ins=v.substring(cp);
+    if(armed.length && removed===0 && ins.length===1){ sendKey(ins.toLowerCase()); }  // e.g. Ctrl+C
+    else if(armed.length && removed===1 && !ins){ sendKey('backspace'); }             // e.g. Ctrl+Backspace
+    else {
+      for(var i=0;i<removed;i++) send({t:'key',k:'backspace'});
+      if(ins) send({t:'text',s:ins});
+      if(armed.length && (removed||ins)) clearMods();
     }
-    typer.value='';
+    if(v.length>160) resetTyper(); else prev=v;
   });
   typer.addEventListener('keydown',function(e){
+    if(e.key==='Enter' && (e.isComposing||e.keyCode===229)) return;  // IME confirm, not Enter
+    if(e.key==='Backspace'){    // empty box: nothing to diff, delete on the PC directly
+      if(typer.value===''){ sendKey('backspace'); e.preventDefault(); }
+      return;
+    }
     var map={Enter:'enter',Tab:'tab',Escape:'escape',ArrowUp:'up',ArrowDown:'down',
-             ArrowLeft:'left',ArrowRight:'right',Backspace:'backspace'};
-    if(map[e.key]){ sendKey(map[e.key]); e.preventDefault(); }
+             ArrowLeft:'left',ArrowRight:'right'};
+    if(map[e.key]){ sendKey(map[e.key]); e.preventDefault();
+      if(e.key==='Enter') resetTyper(); }
   });
 
   // ---- key buttons: nav + shortcuts + F-keys ----
@@ -645,9 +760,12 @@ PAGE = r"""<!doctype html>
     fk.appendChild(fb); }
   Array.prototype.forEach.call(document.querySelectorAll('.keys .key'),function(b){
     if(b.classList.contains('mod')) return;
+    b.addEventListener('pointerdown',noteTyping);
     b.addEventListener('click',function(){
-      if(b.dataset.m) send({t:'key',k:b.dataset.k,m:b.dataset.m.split('+')});
-      else { sendKey(b.dataset.k); typer.focus(); }
+      if(b.dataset.m){ send({t:'key',k:b.dataset.k,m:b.dataset.m.split('+')}); clearMods(); }
+      else sendKey(b.dataset.k);
+      resetTyper();   // the PC's text/caret moved on; the box no longer mirrors it
+      refocus();
     });
   });
 
@@ -664,6 +782,7 @@ PAGE = r"""<!doctype html>
     b.addEventListener('pointerup',stop);
     b.addEventListener('pointerleave',stop);
     b.addEventListener('pointercancel',stop);
+    b.addEventListener('contextmenu',function(e){ e.preventDefault(); });   // held on purpose
   });
 
   // ---- power ----
@@ -676,9 +795,17 @@ PAGE = r"""<!doctype html>
   });
 
   // ---- clipboard ----
+  // Briefly swap a button's label to confirm an action the PC doesn't answer.
+  function flash(b,t){ if(!b.dataset.lbl) b.dataset.lbl=b.textContent;
+    clearTimeout(b._ft); b.textContent=t;
+    b._ft=setTimeout(function(){ b.textContent=b.dataset.lbl; },1200); }
   document.getElementById('clipsend').onclick=function(){
-    send({t:'clipset',s:document.getElementById('clipbox').value}); };
-  document.getElementById('clipgetb').onclick=function(){ send({t:'clipget'}); };
+    if(!ready){ flash(this,'Not connected'); return; }
+    send({t:'clipset',s:document.getElementById('clipbox').value});
+    flash(this,'Sent ✓'); };
+  document.getElementById('clipgetb').onclick=function(){
+    if(!ready){ flash(this,'Not connected'); return; }
+    send({t:'clipget'}); };
 
   // ---- apps ----
   function renderApps(apps){
@@ -690,7 +817,8 @@ PAGE = r"""<!doctype html>
     apps.forEach(function(a){
       var b=document.createElement('button'); b.className='app'; b.textContent=a.name;
       if(a.color) b.style.borderLeftColor='#'+a.color;
-      b.addEventListener('click',function(){ send({t:'launch',target:a.target}); });
+      b.addEventListener('click',function(){ send({t:'launch',target:a.target});
+        b.classList.add('sent'); setTimeout(function(){ b.classList.remove('sent'); },600); });
       g.appendChild(b);
     });
   }
@@ -747,7 +875,7 @@ PAGE = r"""<!doctype html>
   }
   function captureCurrent(){
     simg.style.visibility='hidden'; shotmsg.style.display='';
-    shotmsg.textContent='Capturing…';
+    shotmsg.textContent='Capturing…'; if(ready) shotPending++;   // one reply per request sent
     send(curDisplay===null ? {t:'shot'} : {t:'shot',display:curDisplay});
   }
   function openShot(){
@@ -817,6 +945,11 @@ PAGE = r"""<!doctype html>
   }
   shotStage.addEventListener('pointerup',sUp);
   shotStage.addEventListener('pointercancel',sUp);
+  // a finger held still must not open the browser's image/text long-press menu
+  ['pad','shotstage'].forEach(function(id){
+    document.getElementById(id).addEventListener('contextmenu',function(e){ e.preventDefault(); }); });
+  // iOS only shows :active press states once a touch listener exists
+  document.addEventListener('touchstart',function(){},{passive:true});
   window.addEventListener('resize',function(){ if(shotOpen&&nW) sFit(); });
   window.addEventListener('keydown',function(e){
     if(e.key==='Escape'&&shotOpen) closeShot(); });
@@ -833,9 +966,10 @@ PAGE = r"""<!doctype html>
   } else {
     // No PIN in the URL -> reuse the one this device remembered, so a reload or
     // reopened tab reconnects on its own (like the app). Cleared on a wrong PIN.
-    var sp = '';
-    try { sp = localStorage.getItem('jr_pin') || ''; } catch (e) {}
-    if (sp) { document.getElementById('pin').value = sp; pin = sp; connect(); }
+    // (not "sp": that's the Quick View pointer map above, same function scope)
+    var savedPin = '';
+    try { savedPin = localStorage.getItem('jr_pin') || ''; } catch (e) {}
+    if (savedPin) { document.getElementById('pin').value = savedPin; pin = savedPin; connect(); }
   }
 })();
 </script>
