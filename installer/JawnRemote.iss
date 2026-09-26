@@ -40,6 +40,12 @@ AppMutex=JawnRemoteServer
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Messages]
+; The default "close all instances" text doesn't help with a tray app whose X
+; only hides it (AppMutex above triggers these).
+SetupAppRunningError=Setup has detected that %1 is currently running. It may be hidden in the system tray (click ^ next to the clock).%n%nRight-click the %1 tray icon and choose Quit, then click OK to continue, or Cancel to exit.
+UninstallAppRunningError=Uninstall has detected that %1 is currently running. It may be hidden in the system tray (click ^ next to the clock).%n%nRight-click the %1 tray icon and choose Quit, then click OK to continue, or Cancel to exit.
+
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
 

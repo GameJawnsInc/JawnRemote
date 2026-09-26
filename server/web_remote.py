@@ -535,7 +535,7 @@ PAGE = r"""<!doctype html>
 
   function connect(){
     if(retryT){ clearTimeout(retryT); retryT=null; }
-    retire(); ready=false; shotPending=0;
+    retire(); ready=false; shotPending=0; resetTyper();
     title.textContent="Connecting…"; dot.classList.remove('on');
     if(!login.classList.contains('hidden') && !msg.textContent) msg.textContent='Connecting…';
     var proto = location.protocol==='https:' ? 'wss://' : 'ws://';
@@ -722,16 +722,49 @@ PAGE = r"""<!doctype html>
   // IME then has its context (auto-space after swiped words, suggestions),
   // and composition, voice typing and paste each arrive once, intact.
   var typer=document.getElementById('typer'), prev='';
-  function resetTyper(){ typer.value=''; prev=''; }
+  // How many PC Backspaces delete a run of text: one per code point, except
+  // that an emoji sequence (flag, skin tone, ZWJ family, keycap, ❤️) goes in
+  // one press -- the same rule as the browser's own backward delete. Built
+  // with RegExp() in a try so browsers without these features still parse.
+  var graphemes=null, emojiRe=null;
+  try{
+    if(window.Intl && Intl.Segmenter){
+      emojiRe=new RegExp('[\\p{Extended_Pictographic}\\u{1F1E6}-\\u{1F1FF}\\u20E3]','u');
+      graphemes=new Intl.Segmenter();
+    }
+  }catch(e){ graphemes=null; }
+  function codePoints(str){ return str.replace(/[\uDC00-\uDFFF]/g,'').length; }
+  function backspaces(str){
+    if(!graphemes) return codePoints(str);
+    var n=0, segs=Array.from(graphemes.segment(str));
+    for(var k=0;k<segs.length;k++){
+      var g=segs[k].segment;
+      n+=emojiRe.test(g) ? 1 : codePoints(g);
+    }
+    return n;
+  }
+  function resetTyper(){ if(typer){ typer.value=''; prev=''; } }
   typer.addEventListener('input',function(){
+    // Offline, nothing reaches the PC: don't keep a mirror of text it never
+    // got, or later edits would backspace over text the user never typed.
+    if(!ready){ resetTyper(); return; }
     var v=typer.value, a=prev, min=Math.min(v.length,a.length), cp=0;
     while(cp<min && v.charAt(cp)===a.charAt(cp)) cp++;
     if(cp && /[\uD800-\uDBFF]/.test(v.charAt(cp-1))) cp--;          // never split an emoji
+    if(graphemes && cp){                      // ...nor an emoji sequence
+      var segs=Array.from(graphemes.segment(a));
+      for(var k=0;k<segs.length;k++){
+        var g=segs[k];
+        if(g.index<cp && cp<g.index+g.segment.length){
+          if(emojiRe.test(g.segment)) cp=g.index;
+          break;
+        }
+      }
+    }
     // The PC's caret sits at the end of what was sent, so undo everything after
     // the first difference and retype the rest. (Keeping a common tail would be
     // wrong there: autocorrect "recieve" -> "receive" would leave "recieei".)
-    var removed=a.substring(cp).replace(/[\uDC00-\uDFFF]/g,'').length,   // chars, not UTF-16 units
-        ins=v.substring(cp);
+    var removed=backspaces(a.substring(cp)), ins=v.substring(cp);
     if(armed.length && removed===0 && ins.length===1){ sendKey(ins.toLowerCase()); }  // e.g. Ctrl+C
     else if(armed.length && removed===1 && !ins){ sendKey('backspace'); }             // e.g. Ctrl+Backspace
     else {

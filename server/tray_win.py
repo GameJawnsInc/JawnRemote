@@ -77,6 +77,12 @@ _proto(_SetWindowLongPtr, ctypes.c_void_p,
        [wintypes.HWND, ctypes.c_int, ctypes.c_void_p])
 _proto(_GetWindowLongPtr, ctypes.c_void_p, [wintypes.HWND, ctypes.c_int])
 
+# Windows 7+; lets an elevated window accept chosen messages through UIPI.
+_ChangeWindowMessageFilterEx = getattr(user32, "ChangeWindowMessageFilterEx", None)
+if _ChangeWindowMessageFilterEx is not None:
+    _proto(_ChangeWindowMessageFilterEx, wintypes.BOOL,
+           [wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p])
+
 
 class GUID(ctypes.Structure):
     _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
@@ -120,6 +126,7 @@ WM_CONTEXTMENU = 0x007B
 NIN_BALLOONUSERCLICK = 0x0405
 # Posted by a second launch of the server (server_gui.SHOW_MSG): show us.
 SHOW_MSG = "JawnRemoteShow"
+MSGFLT_ALLOW = 1
 
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x01, 0x02, 0x04, 0x10
@@ -176,6 +183,16 @@ class TrayIcon:
         self._wndproc = WNDPROC(self._handle)
         self._old_proc = _SetWindowLongPtr(
             hwnd, GWLP_WNDPROC, ctypes.cast(self._wndproc, ctypes.c_void_p))
+        # If this copy runs elevated, UIPI drops registered messages from
+        # non-elevated senders (Explorer's TaskbarCreated, a second launch's
+        # "show" request) unless the window opts in. No-op when not elevated.
+        if _ChangeWindowMessageFilterEx is not None:
+            for m in (self._wm_taskbar, self._wm_show):
+                if m:
+                    try:
+                        _ChangeWindowMessageFilterEx(hwnd, m, MSGFLT_ALLOW, None)
+                    except OSError:
+                        pass
 
         nid = NOTIFYICONDATAW()
         nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)

@@ -292,6 +292,28 @@ void main() {
       expect(keepOn(), [true, false, true, false]);
     });
 
+    testWidgets('opening a PC during the close animation keeps its session',
+        (tester) async {
+      await openRemote(tester);
+      List<Object?> keepOn() => [
+            for (final c in volumeCalls)
+              if (c.method == 'setKeepScreenOn') c.arguments
+          ];
+      nav.currentState!.pop();
+      await tester.pump(const Duration(milliseconds: 50)); // mid-transition
+      nav.currentState!.push(MaterialPageRoute(
+          builder: (_) => const RemoteScreen(
+              host: RemoteHost(name: 'Other', ip: '10.0.0.6', pin: '2222'))));
+      await settle(tester); // the first screen is disposed in here
+      expect(client.connects.last, '10.0.0.6:8770/2222');
+      expect(client.disconnects, 0);
+      expect(keepOn().last, true);
+      nav.currentState!.pop();
+      await settle(tester);
+      expect(client.disconnects, 1);
+      expect(keepOn().last, false);
+    });
+
     testWidgets('hiding Keyboard in Settings closes its open panel',
         (tester) async {
       await openRemote(tester);

@@ -11,6 +11,7 @@ import socket
 import queue
 import subprocess
 import threading
+import time
 import traceback
 import webbrowser
 import ctypes
@@ -201,6 +202,8 @@ class App:
         self._server_error = None     # why the server couldn't start (kept shown)
         self._sessions = []           # live connections' names, oldest first
         self._sending = False         # a GUI -> phone push is running
+        self._status_hold = 0.0       # monotonic time until a result stays shown
+        self._status_retry = None     # pending after() to re-show the connection
         self._apps_mgr = None
         self._last_balloon = None     # 'hint' | 'file': what a balloon click means
         self._fw_tries = 0
@@ -235,7 +238,7 @@ class App:
             # (Hyper-V/WSL): explain it instead of dying with a traceback.
             self.server = None
             self._server_error = (f"Can't start: port {PORT} is in use or blocked\n"
-                                  "(is JawnRemote already running?)")
+                                  "(by another program, or reserved by Windows)")
             self._set_status(self._server_error, RED)
             return
         self.server.web_enabled = self.web_var.get()
@@ -263,6 +266,7 @@ class App:
                     self._show_conn_status()
                 elif event == "file_in":
                     self._set_status(f"Received {_short(info, 20)} ✓", GREEN)
+                    self._hold_status()
                     if self.tray is not None and self.root.state() == "withdrawn":
                         self.tray.show_balloon(
                             "File received",
@@ -467,6 +471,9 @@ class App:
             else:
                 self._set_status(f"Couldn't send {name}" + (f": {err}" if err else ""),
                                  AMBER)
+            # The phone dropping is often WHY a send failed: keep the result up
+            # instead of letting the paired "disconnected" replace it at once.
+            self._hold_status()
             self._sending = False
             self.send_btn.configure(state="normal")
 
@@ -603,8 +610,21 @@ class App:
                 return t
         return text
 
+    def _hold_status(self, secs=8):
+        """Keep the status just set (a transfer result) on screen for `secs`
+        before connect/disconnect updates may replace it."""
+        self._status_hold = time.monotonic() + secs
+
     def _show_conn_status(self):
         if self._server_error:
+            return
+        left = self._status_hold - time.monotonic()
+        if left > 0:
+            if self._status_retry is None:
+                def again():
+                    self._status_retry = None
+                    self._show_conn_status()
+                self._status_retry = self.root.after(int(left * 1000) + 50, again)
             return
         if self._sessions:
             n = len(self._sessions)

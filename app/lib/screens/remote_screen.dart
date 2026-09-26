@@ -39,9 +39,16 @@ class _RemoteScreenState extends State<RemoteScreen> {
     _client = AppScope.of(context).client;
   }
 
+  // RemoteScreens alive right now. Opening a PC during the previous remote's
+  // close animation runs the new one's initState before the old one's
+  // dispose, so only the last one out may disconnect / release the rocker /
+  // clear keep-screen-on (the newer screen applies its own on build).
+  static int _live = 0;
+
   @override
   void initState() {
     super.initState();
+    _live++;
     // Hardware volume rocker -> PC volume (forwarded only while connected).
     _hwVolume.onVolume =
         (dir) => _client?.key(dir == 'up' ? 'volumeup' : 'volumedown');
@@ -56,10 +63,12 @@ class _RemoteScreenState extends State<RemoteScreen> {
 
   @override
   void dispose() {
-    _hwVolume.setIntercept(false); // restore normal volume-button behavior
     _hwVolume.onVolume = null;
-    if (_keepOnApplied == true) HardwareVolume.setKeepScreenOn(false);
-    _client?.disconnect();
+    if (--_live == 0) {
+      _hwVolume.setIntercept(false); // restore normal volume-button behavior
+      if (_keepOnApplied == true) HardwareVolume.setKeepScreenOn(false);
+      _client?.disconnect();
+    }
     super.dispose();
   }
 
