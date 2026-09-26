@@ -17,7 +17,8 @@ import ctypes
 import winreg
 
 import tkinter as tk
-from tkinter import filedialog
+import tkinter.font as tkfont
+from tkinter import filedialog, messagebox
 
 import server as srv
 import apps_store as appstore
@@ -34,6 +35,10 @@ PORT = srv.DEFAULT_PORT
 FW_RULE = "JawnRemote"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 CREATE_NO_WINDOW = 0x08000000
+AUTOSTART_ARG = "--tray"            # sign-in launch: start hidden in the tray
+MUTEX_NAME = "JawnRemoteServer"     # also the installer's AppMutex -- keep in sync
+SHOW_MSG = "JawnRemoteShow"         # tray_win turns this into its 'show' action
+QR_QUIET, QR_SCALE = 4, 4           # QR border (modules) and px per module
 
 BG = "#0E1116"
 CARD = "#161C24"
@@ -41,6 +46,24 @@ FG = "#FFFFFF"
 MUTED = "#8A94A6"
 ACCENT = "#4F8CFF"
 GREEN = "#3DDC84"
+AMBER = "#E8A33D"
+RED = "#E85D5D"
+
+_instance_mutex = None              # held (never closed) for the process lifetime
+
+
+def _short(s, n):
+    """s cut to at most n chars with a middle ellipsis, keeping a short file
+    extension: ('IMG_20260926_143512_HDR.jpg', 20) -> 'IMG_2026…512_HDR.jpg'."""
+    s = str(s)
+    if len(s) <= n:
+        return s
+    root, ext = os.path.splitext(s)
+    if len(ext) > 8 or " " in ext:
+        root, ext = s, ""
+    keep = n - len(ext) - 1
+    head = (keep + 1) // 2
+    return root[:head] + "…" + root[len(root) - (keep - head):] + ext
 
 
 def data_dir():
@@ -59,11 +82,13 @@ def exe_command():
 
 
 def firewall_ok():
+    # netsh's text is localized (and OEM-codepage), so go by its exit code --
+    # non-zero when no rule matches; the English check is just a backstop.
     try:
         out = subprocess.run(
             ["netsh", "advfirewall", "firewall", "show", "rule", f"name={FW_RULE}"],
-            capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
-        return "No rules match" not in out.stdout
+            capture_output=True, creationflags=CREATE_NO_WINDOW)
+        return out.returncode == 0 and b"No rules match" not in out.stdout
     except Exception:
         return False
 
@@ -74,6 +99,7 @@ def add_firewall_rules():
     Scoped to remoteip=localsubnet so only devices on your own network can
     reach the server -- the open port is invisible to the internet. profile=any
     is kept so it works even when Windows marks your Wi-Fi as 'Public'.
+    Returns False if the UAC prompt was cancelled (or elevation failed).
     """
     parts = [
         f'netsh advfirewall firewall delete rule name="{FW_RULE}"',
@@ -84,7 +110,9 @@ def add_firewall_rules():
         f'action=allow protocol=UDP localport={PORT} profile=any remoteip=localsubnet',
     ]
     cmd = " & ".join(parts)
-    ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c {cmd}", None, 0)
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", "cmd.exe", f"/c {cmd}",
+                                             None, 0)
+    return int(rc or 0) > 32
 
 
 def autostart_enabled():
@@ -97,18 +125,60 @@ def autostart_enabled():
 
 
 def set_autostart(enable):
+    """Add/remove the sign-in entry (it starts us hidden in the tray).
+    Returns False if the registry change failed."""
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
                             winreg.KEY_SET_VALUE) as k:
             if enable:
-                winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, exe_command())
+                winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ,
+                                  f"{exe_command()} {AUTOSTART_ARG}")
             else:
                 try:
                     winreg.DeleteValue(k, APP_NAME)
-                except OSError:
-                    pass
+                except FileNotFoundError:
+                    pass    # already off
+        return True
     except OSError:
-        pass
+        return False
+
+
+def _claim_single_instance():
+    """True if JawnRemote is already running -- after asking that copy to show
+    its window. (A second copy would silently co-bind the port on Windows and
+    split connections between two tray icons.) Any ctypes trouble -> False,
+    i.e. just start normally."""
+    global _instance_mutex
+    try:
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        k32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL,
+                                     wintypes.LPCWSTR]
+        _instance_mutex = k32.CreateMutexW(None, False, MUTEX_NAME)
+        # ERROR_ALREADY_EXISTS, or ERROR_ACCESS_DENIED (held by an elevated copy)
+        if ctypes.get_last_error() not in (183, 5):
+            return False
+        u32 = ctypes.WinDLL("user32")      # own instance: argtypes set here only
+        u32.RegisterWindowMessageW.restype = wintypes.UINT
+        u32.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
+        u32.FindWindowW.restype = wintypes.HWND
+        u32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        u32.AllowSetForegroundWindow.restype = wintypes.BOOL
+        u32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+        u32.PostMessageW.restype = wintypes.BOOL
+        u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                     wintypes.WPARAM, wintypes.LPARAM]
+        title = f"{APP_NAME} Server"
+        hwnd = (u32.FindWindowW("TkTopLevel", title)
+                or u32.FindWindowW(None, title))
+        msg = u32.RegisterWindowMessageW(SHOW_MSG)
+        if hwnd and msg:
+            u32.AllowSetForegroundWindow(0xFFFFFFFF)   # ASFW_ANY: may come to front
+            u32.PostMessageW(hwnd, msg, 0, 0)
+        return True
+    except Exception:
+        return False
 
 
 class App:
@@ -128,11 +198,23 @@ class App:
 
         self._tray_hint = os.path.join(data_dir(), "tray_hint_shown")
         self._web_off_flag = os.path.join(data_dir(), "web_off")
+        self._server_error = None     # why the server couldn't start (kept shown)
+        self._sessions = []           # live connections' names, oldest first
+        self._sending = False         # a GUI -> phone push is running
+        self._apps_mgr = None
+        self._last_balloon = None     # 'hint' | 'file': what a balloon click means
+        self._fw_tries = 0
+        self._ip_job = None
         self._build_ui()
+        if self.autostart_var.get():
+            set_autostart(True)       # keep the entry on this copy (+ --tray)
         self._start_server()
         self._poll_events()
         self._refresh_firewall()
         self._setup_tray()
+        if self.tray is None:
+            self.footer.configure(text="Closing this window stops the server.")
+        self._ip_job = self.root.after(15000, self._check_ips)
 
     def _log_exception(self, exc, value, tb):
         try:
@@ -145,8 +227,17 @@ class App:
 
     # ---- server ----
     def _start_server(self):
-        self.server = srv.build_server(PORT, "0.0.0.0", self.pin, True,
-                                       on_event=self._on_event)
+        try:
+            self.server = srv.build_server(PORT, "0.0.0.0", self.pin, True,
+                                           on_event=self._on_event)
+        except OSError:
+            # Port taken by another program, or in a range Windows reserved
+            # (Hyper-V/WSL): explain it instead of dying with a traceback.
+            self.server = None
+            self._server_error = (f"Can't start: port {PORT} is in use or blocked\n"
+                                  "(is JawnRemote already running?)")
+            self._set_status(self._server_error, RED)
+            return
         self.server.web_enabled = self.web_var.get()
         srv.start_discovery(PORT, self.name)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -158,12 +249,27 @@ class App:
         try:
             while True:
                 event, info = self.events.get_nowait()
+                # connected/disconnected come in pairs per session (app socket
+                # or browser), so count them: a stale socket reaped after a
+                # reconnect, or a closed browser tab, mustn't say "Ready".
                 if event == "connected":
-                    self._set_status(f"Connected:  {info}", GREEN)
+                    self._sessions.append(info)
+                    self._show_conn_status()
                 elif event == "disconnected":
-                    self._set_status("Ready — waiting for your phone", MUTED)
+                    try:
+                        self._sessions.remove(info)
+                    except ValueError:
+                        pass
+                    self._show_conn_status()
                 elif event == "file_in":
-                    self._set_status(f"Received {info} ✓", GREEN)
+                    self._set_status(f"Received {_short(info, 20)} ✓", GREEN)
+                    if self.tray is not None and self.root.state() == "withdrawn":
+                        self.tray.show_balloon(
+                            "File received",
+                            f"{_short(info, 40)} was saved to Downloads\\JawnRemote")
+                        self._last_balloon = "file"
+                elif event == "ips":
+                    self._update_ips(info)
         except queue.Empty:
             pass
         # Drain tray actions HERE, on the tk thread (safe Tcl context) -- never
@@ -172,6 +278,9 @@ class App:
             for action in self.tray.poll():
                 if action == "show":
                     self._do_show()
+                elif action == "balloon":
+                    if self._last_balloon == "file":
+                        self._open_received()
                 elif action == "quit":
                     self._do_quit()
                     return  # window destroyed; stop the poll loop
@@ -194,7 +303,7 @@ class App:
             pass
 
         tk.Label(r, text=APP_NAME, bg=BG, fg=FG,
-                 font=("Segoe UI Semibold", 22)).pack(pady=(22, 0))
+                 font=("Segoe UI Semibold", 22)).pack(pady=(16, 0))
         tk.Label(r, text="Phone mouse & keyboard", bg=BG, fg=MUTED,
                  font=("Segoe UI", 10)).pack()
 
@@ -203,25 +312,48 @@ class App:
         # past "Starting…" when the firewall is already configured at launch.
         self.status = tk.Label(r, text="●  Starting…", bg=BG, fg=MUTED,
                                font=("Segoe UI", 11, "bold"))
-        self.status.pack(pady=(16, 8))
+        self.status.pack(pady=(12, 8))
+        self._status_font = tkfont.Font(root=r, font=self.status.cget("font"))
 
         card = tk.Frame(r, bg=CARD)
         card.pack(fill="x", padx=24, pady=6)
-        tk.Label(card, text="This PC", bg=CARD, fg=MUTED,
+        # Two columns -- details left, browser-remote QR right (packed first so
+        # it's never squeezed) -- keeps the window short enough for 1366x768
+        # and 150%-scaled laptop screens.
+        right = tk.Frame(card, bg=CARD)
+        right.pack(side="right", anchor="n", padx=(0, 14), pady=12)
+        left = tk.Frame(card, bg=CARD)
+        left.pack(side="left", fill="both", expand=True)
+        tk.Label(left, text="This PC", bg=CARD, fg=MUTED,
                  font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(12, 0))
-        tk.Label(card, text=self.name, bg=CARD, fg=FG,
+        tk.Label(left, text=self.name, bg=CARD, fg=FG,
                  font=("Segoe UI", 13)).pack(anchor="w", padx=16)
-        tk.Label(card, text="Address", bg=CARD, fg=MUTED,
+        tk.Label(left, text="Address", bg=CARD, fg=MUTED,
                  font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(10, 0))
-        tk.Label(card, text=f"{self.ips[0]} : {PORT}", bg=CARD, fg=FG,
-                 font=("Consolas", 14)).pack(anchor="w", padx=16)
+        self.addr_label = tk.Label(left, text=f"{self.ips[0]} : {PORT}", bg=CARD,
+                                   fg=FG, font=("Consolas", 14))
+        self.addr_label.pack(anchor="w", padx=16)
+        # Always created (the addresses are re-checked); shown only when useful.
+        self.also_label = tk.Label(left, text="also: " + ", ".join(self.ips[1:]),
+                                   bg=CARD, fg=MUTED, font=("Consolas", 9),
+                                   wraplength=230, justify="left")
         if len(self.ips) > 1:
-            tk.Label(card, text="also: " + ", ".join(self.ips[1:]), bg=CARD,
-                     fg=MUTED, font=("Consolas", 9)).pack(anchor="w", padx=16)
-        tk.Label(card, text="PIN", bg=CARD, fg=MUTED,
+            self.also_label.pack(anchor="w", padx=16)
+        tk.Label(left, text="PIN", bg=CARD, fg=MUTED,
                  font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(10, 0))
-        tk.Label(card, text=self.pin, bg=CARD, fg=ACCENT,
+        tk.Label(left, text=self.pin, bg=CARD, fg=ACCENT,
                  font=("Consolas", 26, "bold")).pack(anchor="w", padx=16, pady=(0, 14))
+
+        dim = (qr.SIZE + 2 * QR_QUIET) * QR_SCALE
+        self.qr_cv = tk.Canvas(right, width=dim, height=dim, bg="white",
+                               highlightthickness=0, bd=0)
+        self.qr_cv.pack()
+        # Two lines in both states and never wider than the QR, so toggling
+        # the browser remote doesn't shift the columns.
+        self.qr_caption = tk.Label(right, text="", bg=CARD, fg=MUTED,
+                                   font=("Segoe UI", 8), wraplength=dim - 8,
+                                   justify="center")
+        self.qr_caption.pack(pady=(4, 0))
 
         self.fw_label = tk.Label(r, text="", bg=BG, fg=MUTED, font=("Segoe UI", 10))
         self.fw_label.pack(pady=(14, 2))
@@ -245,18 +377,17 @@ class App:
                   bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
                   relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
                   cursor="hand2", borderwidth=0).pack(side="left", padx=(0, 6))
-        tk.Button(btn_row, text="Send file to phone…", command=self._send_file,
-                  bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
-                  relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
-                  cursor="hand2", borderwidth=0).pack(side="left")
-
-        btn_row2 = tk.Frame(r, bg=BG)
-        btn_row2.pack(pady=(6, 0))
-        tk.Button(btn_row2, text="View received files…",
+        self.send_btn = tk.Button(
+            btn_row, text="Send file to phone…", command=self._send_file,
+            bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
+            relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
+            cursor="hand2", borderwidth=0)
+        self.send_btn.pack(side="left")
+        tk.Button(btn_row, text="Received files…",
                   command=self._open_received,
                   bg=CARD, fg=FG, activebackground="#1F2733", activeforeground=FG,
                   relief="flat", font=("Segoe UI", 10), padx=12, pady=5,
-                  cursor="hand2", borderwidth=0).pack()
+                  cursor="hand2", borderwidth=0).pack(side="left", padx=(6, 0))
 
         self.web_var = tk.BooleanVar(value=not os.path.exists(self._web_off_flag))
         tk.Checkbutton(r, text="Allow browser remote (control from any device, no app)",
@@ -266,41 +397,63 @@ class App:
                        borderwidth=0, highlightthickness=0).pack(pady=(14, 0))
         web_row = tk.Frame(r, bg=BG)
         web_row.pack(pady=(2, 0))
-        url = tk.Label(web_row, text=f"http://{self.ips[0]}:{PORT}/",
-                       bg=BG, fg=ACCENT, font=("Consolas", 10), cursor="hand2")
-        url.pack()
-        url.bind("<Button-1>", lambda e: self._open_browser())
-        self._qr_canvas(r).pack(pady=(8, 0))
-        tk.Label(r, text="Point your phone camera here to connect",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(pady=(3, 0))
+        self.url_label = tk.Label(web_row, text=f"http://{self.ips[0]}:{PORT}/",
+                                  bg=BG, fg=ACCENT, font=("Consolas", 10),
+                                  cursor="hand2")
+        self.url_label.pack()
+        self.url_label.bind("<Button-1>", lambda e: self._open_browser())
 
-        tk.Label(r,
-                 text="Keep this open to use your phone as a mouse/keyboard.\n"
-                      "Closing (X) keeps it running in the tray — "
-                      "right-click the tray icon to quit.",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 8), justify="center"
-                 ).pack(side="bottom", pady=10)
+        self.footer = tk.Label(r, text="Closing (X) keeps it running in the tray · "
+                                       "right-click the icon to quit",
+                               bg=BG, fg=MUTED, font=("Segoe UI", 8),
+                               justify="center")
+        self.footer.pack(side="bottom", pady=8)
 
+        self._apply_web_state()
         self._fit_window()
 
     def _fit_window(self):
         """Size the window to fit all controls so the action buttons are never
-        clipped (content height varies with firewall state and IP count)."""
+        clipped (content varies with firewall state and the IP addresses)."""
         self.root.update_idletasks()
-        self.root.geometry(f"440x{self.root.winfo_reqheight()}")
+        w = max(460, self.root.winfo_reqwidth())
+        self.root.geometry(f"{w}x{self.root.winfo_reqheight()}")
 
     def _manage_apps(self):
-        AppsManager(self.root)
+        # One manager at a time: a second one's stale list would overwrite the
+        # first one's edits when it saves.
+        m = self._apps_mgr
+        if m is not None and m.win.winfo_exists():
+            m.win.deiconify()
+            m.win.lift()
+            try:
+                m.win.focus_force()
+            except Exception:
+                pass
+            return
+        self._apps_mgr = AppsManager(self.root)
 
     def _send_file(self):
-        client = self.server.latest_client()
-        if client is None:
-            self._set_status("Connect your phone first, then try again", "#E8A33D")
+        if self.server is None:
+            return
+        if self._sending:
+            self._set_status("Already sending a file — wait for it to finish", AMBER)
+            return
+        if self.server.latest_client() is None:
+            self._set_status("Open the JawnRemote app on your phone first", AMBER)
             return
         path = filedialog.askopenfilename(title="Send a file to your phone")
         if not path:
             return
-        name = os.path.basename(path)
+        # Look the phone up again: it may have reconnected (new socket) while
+        # the dialog was open, and the old connection is dead.
+        client = self.server.latest_client()
+        if client is None:
+            self._set_status("Open the JawnRemote app on your phone first", AMBER)
+            return
+        name = _short(os.path.basename(path), 20)
+        self._sending = True
+        self.send_btn.configure(state="disabled")
         self._set_status(f"Sending {name}…", ACCENT)
 
         def prog(done, total):
@@ -308,15 +461,21 @@ class App:
             self.root.after(0, lambda: self._set_status(
                 f"Sending {name}…  {pct}%", ACCENT))
 
+        def finish(ok, err):
+            if ok:
+                self._set_status(f"Sent {name} to your phone ✓", GREEN)
+            else:
+                self._set_status(f"Couldn't send {name}" + (f": {err}" if err else ""),
+                                 AMBER)
+            self._sending = False
+            self.send_btn.configure(state="normal")
+
         def work():
             try:
-                ok = client.push_file(path, progress=prog)
+                ok, err = client.push_file(path, progress=prog)
             except Exception:
-                ok = False
-            self.root.after(0, lambda: self._set_status(
-                f"Sent {name} to your phone ✓" if ok
-                else f"Couldn't send {name} (is the app open?)",
-                GREEN if ok else "#E8A33D"))
+                ok, err = False, None
+            self.root.after(0, lambda: finish(ok, err))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -330,7 +489,8 @@ class App:
 
     def _on_web_toggle(self):
         on = self.web_var.get()
-        self.server.web_enabled = on
+        if self.server is not None:
+            self.server.web_enabled = on
         try:
             if on and os.path.exists(self._web_off_flag):
                 os.remove(self._web_off_flag)
@@ -338,54 +498,159 @@ class App:
                 open(self._web_off_flag, "w").close()
         except OSError:
             pass
+        self._apply_web_state()
+
+    def _apply_web_state(self):
+        """Offer the browser URL/QR only while the browser remote is allowed
+        (the QR slot keeps its size, so the window doesn't jump)."""
+        if self.web_var.get():
+            self.url_label.configure(fg=ACCENT, cursor="hand2")
+            self.qr_caption.configure(text="Scan to open the\nbrowser remote")
+        else:
+            self.url_label.configure(fg=MUTED, cursor="")
+            self.qr_caption.configure(text="Turn on browser remote\nto use this")
+        self._draw_qr()
 
     def _open_browser(self):
+        if not self.web_var.get():
+            return
         try:
             webbrowser.open(f"http://{self.ips[0]}:{PORT}/")
         except Exception:
             pass
 
-    def _qr_canvas(self, parent):
-        """A scannable QR of the browser-remote URL (pure-stdlib generator)."""
+    def _draw_qr(self):
+        """(Re)draw the scannable QR of the browser-remote URL (pure-stdlib
+        generator), or a placeholder while the browser remote is off."""
+        cv = self.qr_cv
+        cv.delete("all")
+        dim = int(cv.cget("width"))
+        if not self.web_var.get():
+            cv.configure(bg=CARD)
+            cv.create_rectangle(0, 0, dim - 1, dim - 1, outline="#2A3340")
+            cv.create_text(dim // 2, dim // 2, text="Browser remote\nis off",
+                           fill=MUTED, font=("Segoe UI", 9), justify="center")
+            return
+        cv.configure(bg="white")
         mods = qr.matrix(f"http://{self.ips[0]}:{PORT}/#{self.pin}")
         n = len(mods)
-        quiet, scale = 4, 4
-        dim = (n + 2 * quiet) * scale
-        cv = tk.Canvas(parent, width=dim, height=dim, bg="white",
-                       highlightthickness=0, bd=0)
         for rr in range(n):
             for cc in range(n):
                 if mods[rr][cc]:
-                    x = (cc + quiet) * scale
-                    y = (rr + quiet) * scale
-                    cv.create_rectangle(x, y, x + scale, y + scale,
+                    x = (cc + QR_QUIET) * QR_SCALE
+                    y = (rr + QR_QUIET) * QR_SCALE
+                    cv.create_rectangle(x, y, x + QR_SCALE, y + QR_SCALE,
                                         fill="black", outline="")
-        return cv
 
+    # ---- LAN addresses (Wi-Fi may come up after us; networks change) ----
+    def _check_ips(self):
+        """Re-read the addresses off the tk thread (now, then every 15 s);
+        _poll_events applies the result."""
+        if self._ip_job is not None:
+            self.root.after_cancel(self._ip_job)
+
+        def work():
+            try:
+                self.events.put(("ips", srv.get_lan_ips()))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+        self._ip_job = self.root.after(15000, self._check_ips)
+
+    def _update_ips(self, ips):
+        if not ips or ips == self.ips:
+            return
+        old0 = self.ips[0]
+        self.ips = ips
+        self.addr_label.configure(text=f"{ips[0]} : {PORT}")
+        self.url_label.configure(text=f"http://{ips[0]}:{PORT}/")
+        if len(ips) > 1:
+            self.also_label.configure(text="also: " + ", ".join(ips[1:]))
+            self.also_label.pack(after=self.addr_label, anchor="w", padx=16)
+        else:
+            self.also_label.pack_forget()
+        if ips[0] != old0:
+            self._draw_qr()
+        self._fit_window()
+
+    # ---- status line ----
     def _set_status(self, text, color):
-        self.status.configure(text="●  " + text, fg=color)
+        if self._server_error and text != self._server_error:
+            return      # no server running: keep saying why
+        self.status.configure(text=self._fit_status("●  " + text), fg=color)
+
+    def _fit_status(self, text):
+        """Backstop for long names: cut more out of the middle -- of the
+        already shortened name, if any -- so both the leading dot and the end
+        of the message stay visible (the label is centered, so it would clip
+        both ends)."""
+        avail = self.root.winfo_width() - 16
+        if "\n" in text or avail < 100 or self._status_font.measure(text) <= avail:
+            return text
+        c = text.find("…")
+        head, tail = (text[:c], text[c + 1:]) if c > 0 else \
+            (text[:len(text) // 2], text[len(text) // 2:])
+        cut_head = True
+        while len(head) > 4 and tail:
+            if cut_head:
+                head = head[:-1]
+            else:
+                tail = tail[1:]
+            cut_head = not cut_head
+            t = head + "…" + tail
+            if self._status_font.measure(t) <= avail:
+                return t
+        return text
+
+    def _show_conn_status(self):
+        if self._server_error:
+            return
+        if self._sessions:
+            n = len(self._sessions)
+            extra = f"  (+{n - 1} more)" if n > 1 else ""
+            self._set_status(f"Connected:  {_short(self._sessions[-1], 24)}{extra}",
+                             GREEN)
+        else:
+            self._set_status("Ready — waiting for your phone", MUTED)
 
     def _refresh_firewall(self):
+        self.fw_btn.configure(state="normal")
         if firewall_ok():
             self.fw_label.configure(text="✓ Firewall is configured", fg=GREEN)
             self.fw_btn.pack_forget()
-            if self.status.cget("text").startswith("●  Starting"):
-                self._set_status("Ready — waiting for your phone", MUTED)
         else:
             self.fw_label.configure(
-                text="Firewall not set up — phone can't connect yet", fg="#E8A33D")
-            self.fw_btn.pack()
-            self._set_status("Ready — waiting for your phone", MUTED)
+                text="Firewall not set up — phone can't connect yet", fg=AMBER)
+            self.fw_btn.pack(after=self.fw_label)
+        # Only advance past "Starting…" -- never clobber "Connected"/"Sending".
+        if self.status.cget("text").startswith("●  Starting"):
+            self._show_conn_status()
         self._fit_window()
 
     def _on_firewall(self):
-        add_firewall_rules()
-        # re-check a few times while the elevated command runs
-        self.root.after(1500, self._refresh_firewall)
-        self.root.after(4000, self._refresh_firewall)
+        if not add_firewall_rules():
+            self.fw_label.configure(
+                text="Firewall change was cancelled — click to try again", fg=AMBER)
+            return
+        self.fw_label.configure(text="Applying firewall rules…", fg=MUTED)
+        self.fw_btn.configure(state="disabled")
+        self._fw_tries = 0
+        self.root.after(1500, self._poll_firewall)
+
+    def _poll_firewall(self):
+        # Re-check while the elevated command runs (up to ~15 s on a slow PC).
+        self._fw_tries += 1
+        if firewall_ok() or self._fw_tries >= 10:
+            self._refresh_firewall()
+        else:
+            self.root.after(1500, self._poll_firewall)
 
     def _on_autostart(self):
-        set_autostart(self.autostart_var.get())
+        want = self.autostart_var.get()
+        if not set_autostart(want):
+            self.autostart_var.set(not want)
+            self._set_status("Couldn't change the startup setting", AMBER)
 
     # ---- tray (close-to-tray instead of full shutdown) ----
     def _setup_tray(self):
@@ -407,13 +672,21 @@ class App:
             # (don't trap the window with no way to bring it back).
             self.tray = None
 
-    def _hide_to_tray(self):
+    def _hide_to_tray(self, hint=True):
+        if self.tray and not self.tray.added:
+            self.tray.readd()
+        if not (self.tray and self.tray.added):
+            # No icon to bring it back with (taskbar not up yet / Explorer
+            # restarting): minimize instead so the window stays reachable.
+            self.root.iconify()
+            return
         self.root.withdraw()
-        if self.tray and not os.path.exists(self._tray_hint):
+        if hint and not os.path.exists(self._tray_hint):
             self.tray.show_balloon(
                 APP_NAME,
                 "Still running here. Click the icon to reopen, "
                 "or right-click it to quit.")
+            self._last_balloon = "hint"
             try:
                 open(self._tray_hint, "w").close()
             except Exception:
@@ -426,6 +699,7 @@ class App:
             self.root.focus_force()
         except Exception:
             pass
+        self._check_ips()
 
     def _do_quit(self):
         try:
@@ -556,6 +830,9 @@ class AppsManager:
         i = self._selected()
         if i is None:
             return
+        if not messagebox.askyesno("Remove app", f"Remove '{self.apps[i]['name']}'?",
+                                   parent=self.win):
+            return
         del self.apps[i]
         self._save(min(i, len(self.apps) - 1) if self.apps else None)
 
@@ -573,12 +850,16 @@ class AppEditor:
     """Modal add/edit dialog for a single app entry."""
 
     def __init__(self, parent, entry, on_save):
+        self.parent = parent
         self.on_save = on_save
         self.win = tk.Toplevel(parent)
         self.win.title("Edit app" if entry else "Add app")
         self.win.configure(bg=BG)
         self.win.geometry("370x310")
         self.win.transient(parent)
+        self.win.protocol("WM_DELETE_WINDOW", self._close)
+        self.win.bind("<Return>", lambda e: self._save())
+        self.win.bind("<Escape>", lambda e: self._close())
         try:
             self.win.grab_set()
         except Exception:
@@ -618,25 +899,52 @@ class AppEditor:
 
         actions = tk.Frame(self.win, bg=BG)
         actions.pack(fill="x", padx=16, pady=16, side="bottom")
-        _flat_button(actions, "Cancel", self.win.destroy).pack(side="right", padx=(6, 0))
+        _flat_button(actions, "Cancel", self._close).pack(side="right", padx=(6, 0))
         _flat_button(actions, "Save", self._save, primary=True).pack(side="right")
+        self.hint = tk.Label(self.win, text="", bg=BG, fg=AMBER,
+                             font=("Segoe UI", 9))
+        self.hint.pack(side="bottom")          # just above the buttons
         self.name.focus_set()
+
+    def _close(self):
+        self.win.destroy()
+        # Tk has one grab: hand it back to the manager window we came from.
+        try:
+            if self.parent.winfo_exists():
+                self.parent.grab_set()
+        except tk.TclError:
+            pass
 
     def _save(self):
         name = self.name.get().strip()
         target = self.target.get().strip()
-        if name and target:
-            self.on_save({
-                "name": name, "target": target,
-                "icon": self.icon_var.get(),
-                "color": APP_COLORS.get(self.color_var.get(), "4F8CFF"),
-            })
-        self.win.destroy()
+        if not name or not target:
+            self.win.bell()
+            self.hint.configure(text="Name and target are both required")
+            (self.target if name else self.name).focus_set()
+            return
+        self.on_save({
+            "name": name, "target": target,
+            "icon": self.icon_var.get(),
+            "color": APP_COLORS.get(self.color_var.get(), "4F8CFF"),
+        })
+        self._close()
 
 
 def main():
+    if _claim_single_instance():
+        return      # already running -- that copy was asked to show itself
+    hidden = AUTOSTART_ARG in sys.argv[1:]
     root = tk.Tk()
-    App(root)
+    if hidden:
+        root.attributes("-alpha", 0.0)      # no window flash at sign-in
+    app = App(root)
+    if hidden:
+        # Withdraw only now: the tray needed the mapped window. With no tray,
+        # or no server (keep its "Can't start" visible), it shows as usual.
+        if app.tray is not None and app.server is not None:
+            app._hide_to_tray(hint=False)
+        root.attributes("-alpha", 1.0)
     root.mainloop()
 
 

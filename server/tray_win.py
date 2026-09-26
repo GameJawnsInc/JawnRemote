@@ -14,7 +14,7 @@ drains those actions from an after() loop, where touching tkinter is safe:
     hwnd = tray_win.host_hwnd(root)
     tray = tray_win.TrayIcon(hwnd, ico_path, "tooltip")
     # in an after() loop on the tk thread:
-    for action in tray.poll():        # 'show' | 'quit'
+    for action in tray.poll():        # 'show' | 'quit' | 'balloon' (clicked)
         ...
     tray.show_balloon("Title", "msg") # call from the tk thread
     tray.remove()                     # call from the tk thread
@@ -64,6 +64,7 @@ _proto(user32.SetForegroundWindow, wintypes.BOOL, [wintypes.HWND])
 _proto(user32.PostMessageW, wintypes.BOOL,
        [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM])
 _proto(user32.GetSystemMetrics, ctypes.c_int, [ctypes.c_int])
+_proto(user32.RegisterWindowMessageW, wintypes.UINT, [wintypes.LPCWSTR])
 
 # SetWindowLongPtrW exists on 64-bit; on 32-bit it is a macro for SetWindowLongW.
 if hasattr(user32, "SetWindowLongPtrW"):
@@ -116,6 +117,9 @@ WM_LBUTTONUP = 0x0202
 WM_LBUTTONDBLCLK = 0x0203
 WM_RBUTTONUP = 0x0205
 WM_CONTEXTMENU = 0x007B
+NIN_BALLOONUSERCLICK = 0x0405
+# Posted by a second launch of the server (server_gui.SHOW_MSG): show us.
+SHOW_MSG = "JawnRemoteShow"
 
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
 NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 0x01, 0x02, 0x04, 0x10
@@ -149,6 +153,11 @@ class TrayIcon:
         # WndProc and poll() both run on the tk thread, so a plain list is fine.
         self._actions = []
         self._removed = False
+        self.added = False              # is the icon in the tray right now?
+        # Explorer broadcasts TaskbarCreated when it (re)starts: every icon
+        # must then be added again by its owner.
+        self._wm_taskbar = user32.RegisterWindowMessageW("TaskbarCreated")
+        self._wm_show = user32.RegisterWindowMessageW(SHOW_MSG)
 
         # Load the icon at small-icon size; fall back to the generic app icon.
         cx = user32.GetSystemMetrics(SM_CXSMICON) or 16
@@ -176,8 +185,20 @@ class TrayIcon:
         nid.uCallbackMessage = TRAY_CALLBACK
         nid.hIcon = self._hicon
         nid.szTip = (tooltip or "")[:127]
-        Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
         self._nid = nid
+        # Can fail, e.g. at sign-in before the taskbar is up (see readd()).
+        self.added = bool(Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)))
+
+    def readd(self):
+        """Put the icon back after Explorer restarted, or retry a failed add.
+        Pure Win32 (safe from the WndProc as well as the tk thread)."""
+        if self._removed:
+            return
+        self._nid.uFlags = TIP_FLAGS
+        # NIM_ADD fails if the icon is still there (e.g. a TaskbarCreated
+        # re-broadcast on a DPI change): then a MODIFY is what we want.
+        self.added = bool(Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._nid))) \
+            or bool(Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._nid)))
 
     # --- WndProc: runs during Windows message dispatch. NO tkinter/Tcl here. ---
     def _handle(self, hwnd, msg, wparam, lparam):
@@ -187,7 +208,14 @@ class TrayIcon:
                 self._actions.append("show")
             elif event in (WM_RBUTTONUP, WM_CONTEXTMENU):
                 self._popup()
+            elif event == NIN_BALLOONUSERCLICK:
+                self._actions.append("balloon")
             return 0
+        if self._wm_show and msg == self._wm_show:
+            self._actions.append("show")
+            return 0
+        if self._wm_taskbar and msg == self._wm_taskbar:
+            self.readd()        # then pass it on as usual
         if self._old_proc:
             return user32.CallWindowProcW(self._old_proc, hwnd, msg, wparam, lparam)
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -211,7 +239,7 @@ class TrayIcon:
             self._actions.append("quit")
 
     def poll(self):
-        """Return and clear pending actions ('show'/'quit').
+        """Return and clear pending actions ('show'/'quit'/'balloon').
         Call this from the tkinter thread (an after() loop) so the resulting
         window operations happen in a safe Tcl context."""
         actions, self._actions = self._actions, []

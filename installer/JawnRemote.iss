@@ -8,7 +8,7 @@
 ; The open port stays invisible to the internet.
 
 #define MyAppName "JawnRemote"
-#define MyAppVersion "1.13.1"
+#define MyAppVersion "1.14.0"
 #define MyAppPublisher "Jawnston Inc."
 #define MyAppExeName "JawnRemoteServer.exe"
 #define Port "8770"
@@ -31,6 +31,11 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
+; The server usually runs hidden in the tray (X only hides it), so a plain
+; "close the app" can't be relied on. The running server holds this mutex
+; (created in server_gui.py -- keep the names in sync): Setup and Uninstall
+; then ask the user to quit it (tray icon > Quit) before replacing/removing it.
+AppMutex=JawnRemoteServer
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -51,6 +56,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 ; Note: "start at login" is offered inside the app itself (it writes the
 ; current user's HKCU Run key at runtime -- unambiguous and user-controlled).
+; The uninstaller removes that value if it points into this install ([Code]).
 
 [Run]
 ; Remove any stale rules, then allow inbound on ALL profiles (incl. Public) but
@@ -68,3 +74,18 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Start {#MyAppName} now"; Flags:
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#MyAppName}"""; Flags: runhidden; RunOnceId: "DelFwTcp"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#MyAppName} (discovery)"""; Flags: runhidden; RunOnceId: "DelFwUdp"
+
+[Code]
+// Drop the app's own "start at login" value on uninstall, so Windows isn't left
+// launching a deleted exe -- but only if it points into this install, not at a
+// separate portable copy of JawnRemote.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  V: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+    if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
+         'JawnRemote', V) and
+       (Pos(Lowercase(AddBackslash(ExpandConstant('{app}'))), Lowercase(V)) > 0) then
+      RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'JawnRemote');
+end;
