@@ -21,14 +21,28 @@ class MacrosScreen extends StatefulWidget {
 class _MacrosScreenState extends State<MacrosScreen> {
   Settings get _settings => AppScope.of(context).settings;
 
+  // Macros mid-run (by identity). A second tap waits for the first run to end
+  // instead of interleaving two copies' keystrokes on the PC.
+  final Set<Macro> _running = Set.identity();
+
   Future<void> _run(Macro m) async {
     if (!widget.client.isConnected) {
       _snack('Not connected to a PC.');
       return;
     }
+    if (_running.contains(m)) return;
+    setState(() => _running.add(m));
     HapticFeedback.lightImpact();
     _snack('Running ${m.label}…');
-    await runMacro(widget.client, m);
+    try {
+      await runMacro(widget.client, m);
+    } finally {
+      if (mounted) {
+        setState(() => _running.remove(m));
+      } else {
+        _running.remove(m);
+      }
+    }
   }
 
   void _snack(String msg) {
@@ -59,8 +73,27 @@ class _MacrosScreenState extends State<MacrosScreen> {
   }
 
   Future<void> _delete(int i) async {
-    final list = [..._settings.macros]..removeAt(i);
-    await _settings.saveMacros(list);
+    final settings = _settings; // the Undo may outlive this screen
+    final m = settings.macros[i];
+    final list = [...settings.macros]..removeAt(i);
+    await settings.saveMacros(list);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text('Deleted "${m.label}"'),
+        duration: const Duration(seconds: 4),
+        persist: false, // has an action, so it would otherwise never time out
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () {
+            final cur = [...settings.macros];
+            cur.insert(i.clamp(0, cur.length), m);
+            settings.saveMacros(cur);
+          },
+        ),
+      ));
   }
 
   void _longPress(int i) {
@@ -139,6 +172,7 @@ class _MacrosScreenState extends State<MacrosScreen> {
                   itemCount: macros.length,
                   itemBuilder: (context, i) => _MacroTile(
                     macro: macros[i],
+                    running: _running.contains(macros[i]),
                     onTap: () => _run(macros[i]),
                     onLongPress: () => _longPress(i),
                   ),
@@ -176,10 +210,12 @@ Future<void> runMacro(RemoteClient client, Macro m) async {
 
 class _MacroTile extends StatelessWidget {
   final Macro macro;
+  final bool running;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
   const _MacroTile({
     required this.macro,
+    required this.running,
     required this.onTap,
     required this.onLongPress,
   });
@@ -193,28 +229,42 @@ class _MacroTile extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                  color: colorFromHex(macro.color), shape: BoxShape.circle),
-              child: Icon(macroIcon(macro.icon), color: Colors.white, size: 28),
-            ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Text(
-                macro.label,
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13, color: Colors.white),
+        child: Opacity(
+          opacity: running ? 0.7 : 1,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Stack(alignment: Alignment.center, children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                      color: colorFromHex(macro.color),
+                      shape: BoxShape.circle),
+                  child: Icon(macroIcon(macro.icon),
+                      color: Colors.white, size: 28),
+                ),
+                if (running)
+                  const SizedBox(
+                    width: 52,
+                    height: 52,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 3, color: Colors.white),
+                  ),
+              ]),
+              const SizedBox(height: 10),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Text(
+                  macro.label,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, color: Colors.white),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

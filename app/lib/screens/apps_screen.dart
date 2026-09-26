@@ -18,14 +18,43 @@ class AppsScreen extends StatefulWidget {
 }
 
 class _AppsScreenState extends State<AppsScreen> {
+  bool _wasConnected = false;
+
   @override
   void initState() {
     super.initState();
     // Pull the PC-configured list; the handler updates serverApps + notifies.
     widget.client.requestApps();
+    _wasConnected = widget.client.isConnected;
+    widget.client.addListener(_onClient);
+  }
+
+  @override
+  void dispose() {
+    widget.client.removeListener(_onClient);
+    super.dispose();
+  }
+
+  // Opened while reconnecting, the request above went nowhere: ask again when
+  // the link comes back (unless the list already arrived).
+  void _onClient() {
+    final c = widget.client;
+    if (c.isConnected && !_wasConnected && c.serverApps.isEmpty) {
+      c.requestApps();
+    }
+    _wasConnected = c.isConnected;
   }
 
   void _open(_AppEntry app) {
+    if (!widget.client.isConnected) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(
+          content: Text('Not connected to a PC.'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      return;
+    }
     HapticFeedback.lightImpact();
     widget.client.launch(app.target);
     ScaffoldMessenger.of(context)

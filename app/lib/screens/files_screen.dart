@@ -30,13 +30,24 @@ class _FilesScreenState extends State<FilesScreen> {
       _snack('Not connected.');
       return;
     }
-    if (ft.isSending) return;
+    if (ft.preparing) return; // the picker / copy is already running
+    if (ft.isSending) {
+      _snack('A file is already sending.');
+      return;
+    }
     final picked = await ft.pickFile();
     if (picked == null) return;
     final path = picked['path'] as String?;
     final name = (picked['name'] as String?) ?? 'file';
     if (path == null) {
       _snack('Couldn\'t open that file.');
+      return;
+    }
+    if (ft.isSending) {
+      // Another upload started meanwhile. sendFile turns this one away but
+      // still deletes our cache copy of it.
+      _snack('Another file is still sending.');
+      await ft.sendFile(path, name);
       return;
     }
     await ft.sendFile(path, name);
@@ -94,9 +105,20 @@ class _FilesScreenState extends State<FilesScreen> {
                   title: 'Send a file to PC',
                   subtitle:
                       'Pick any file — it lands in Downloads\\JawnRemote on the PC.',
-                  onTap: _pickAndSend,
+                  onTap: ft.preparing ? null : _pickAndSend,
                 ),
-                if (ft.txState != TxState.idle) ...[
+                if (ft.preparing) ...[
+                  // The picked document is being copied in (big files take a
+                  // while) before the upload can start.
+                  const SizedBox(height: 12),
+                  const _TransferCard(
+                    icon: Icons.upload,
+                    title: 'Preparing file…',
+                    progress: 0,
+                    active: true,
+                    note: 'Big files can take a moment.',
+                  ),
+                ] else if (ft.txState != TxState.idle) ...[
                   const SizedBox(height: 12),
                   _TransferCard(
                     icon: Icons.upload,
@@ -108,8 +130,7 @@ class _FilesScreenState extends State<FilesScreen> {
                     progress: ft.txProgress,
                     active: ft.txState == TxState.sending,
                     error: ft.txState == TxState.error ? ft.txError : null,
-                    onCancel:
-                        ft.txState == TxState.sending ? ft.cancelOutgoing : null,
+                    onCancel: ft.canCancel ? ft.cancelOutgoing : null,
                     onDismiss:
                         ft.txState != TxState.sending ? ft.clearOutgoing : null,
                   ),
@@ -151,7 +172,7 @@ class _ActionCard extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   const _ActionCard({
     required this.icon,
     required this.title,
@@ -200,6 +221,7 @@ class _TransferCard extends StatelessWidget {
   final double progress;
   final bool active;
   final String? error;
+  final String? note; // shown instead of the percentage
   final VoidCallback? onCancel;
   final VoidCallback? onDismiss;
   const _TransferCard({
@@ -208,6 +230,7 @@ class _TransferCard extends StatelessWidget {
     required this.progress,
     required this.active,
     this.error,
+    this.note,
     this.onCancel,
     this.onDismiss,
   });
@@ -257,7 +280,7 @@ class _TransferCard extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            error ?? '${(progress * 100).round()}%',
+            error ?? note ?? '${(progress * 100).round()}%',
             style: TextStyle(
               color: error != null ? Colors.redAccent : Colors.white54,
               fontSize: 12,

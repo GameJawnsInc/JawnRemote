@@ -17,6 +17,7 @@ class _MacroEditorScreenState extends State<MacroEditorScreen> {
   late String _icon;
   late String _color; // hex
   late List<MacroStep> _steps;
+  bool _dirty = false; // unsaved edits: confirm before leaving
 
   @override
   void initState() {
@@ -41,10 +42,15 @@ class _MacroEditorScreenState extends State<MacroEditorScreen> {
           SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
   }
 
+  void _touch() {
+    if (!_dirty) setState(() => _dirty = true);
+  }
+
   void _save() {
     final label = _label.text.trim();
     if (label.isEmpty) return _warn('Give the button a name.');
     if (_steps.isEmpty) return _warn('Add at least one step.');
+    ScaffoldMessenger.of(context).hideCurrentSnackBar(); // e.g. a step Undo
     Navigator.of(context)
         .pop(Macro(label: label, icon: _icon, color: _color, steps: _steps));
   }
@@ -55,7 +61,10 @@ class _MacroEditorScreenState extends State<MacroEditorScreen> {
       isScrollControlled: true,
       builder: (_) => const _StepSheet(initial: null),
     );
-    if (s != null) setState(() => _steps.add(s));
+    if (s != null) {
+      setState(() => _steps.add(s));
+      _touch();
+    }
   }
 
   Future<void> _editStep(int i) async {
@@ -64,11 +73,69 @@ class _MacroEditorScreenState extends State<MacroEditorScreen> {
       isScrollControlled: true,
       builder: (_) => _StepSheet(initial: _steps[i]),
     );
-    if (s != null) setState(() => _steps[i] = s);
+    if (s != null) {
+      setState(() => _steps[i] = s);
+      _touch();
+    }
+  }
+
+  void _removeStep(int i) {
+    final s = _steps[i];
+    setState(() => _steps.removeAt(i));
+    _touch();
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: const Text('Step removed'),
+        duration: const Duration(seconds: 4),
+        persist: false, // has an action, so it would otherwise never time out
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () {
+            if (!mounted) return;
+            setState(() => _steps.insert(i.clamp(0, _steps.length), s));
+          },
+        ),
+      ));
+  }
+
+  Future<void> _confirmDiscard() async {
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Discard changes?'),
+        content: const Text('Your edits to this button will be lost.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Keep editing')),
+          TextButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: const Text('Discard')),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      Navigator.of(context).pop();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Back (button, gesture or the AppBar arrow) asks before throwing edits
+    // away; Save pops imperatively and isn't blocked.
+    return PopScope<Macro>(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmDiscard();
+      },
+      child: _scaffold(),
+    );
+  }
+
+  Widget _scaffold() {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.initial == null ? 'New button' : 'Edit button'),
@@ -81,6 +148,7 @@ class _MacroEditorScreenState extends State<MacroEditorScreen> {
         children: [
           TextField(
             controller: _label,
+            onChanged: (_) => _touch(),
             textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(
                 labelText: 'Name',
@@ -93,12 +161,18 @@ class _MacroEditorScreenState extends State<MacroEditorScreen> {
                 child: _IconPicker(
                     value: _icon,
                     color: colorFromHex(_color),
-                    onChanged: (v) => setState(() => _icon = v))),
+                    onChanged: (v) {
+                      setState(() => _icon = v);
+                      _touch();
+                    })),
             const SizedBox(width: 12),
             Expanded(
                 child: _ColorPicker(
                     value: _color,
-                    onChanged: (v) => setState(() => _color = v))),
+                    onChanged: (v) {
+                      setState(() => _color = v);
+                      _touch();
+                    })),
           ]),
           const SizedBox(height: 22),
           Row(children: [
@@ -138,7 +212,7 @@ class _MacroEditorScreenState extends State<MacroEditorScreen> {
                       onPressed: () => _editStep(i)),
                   IconButton(
                       icon: const Icon(Icons.delete_outline),
-                      onPressed: () => setState(() => _steps.removeAt(i))),
+                      onPressed: () => _removeStep(i)),
                 ]),
                 onTap: () => _editStep(i),
               ),
@@ -243,6 +317,7 @@ class _StepSheetState extends State<_StepSheet> {
   final _launch = TextEditingController();
   final _delay = TextEditingController(text: '200');
   final Set<String> _mods = {};
+  String? _error; // why Done was refused, shown on the active field
 
   @override
   void initState() {
@@ -277,11 +352,12 @@ class _StepSheetState extends State<_StepSheet> {
     super.dispose();
   }
 
-  void _warn(String m) {
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-          SnackBar(content: Text(m), behavior: SnackBarBehavior.floating));
+  // Shown inline: a SnackBar would land in the editor's Scaffold, hidden
+  // behind this sheet.
+  void _warn(String m) => setState(() => _error = m);
+
+  void _clearError() {
+    if (_error != null) setState(() => _error = null);
   }
 
   void _done() {
@@ -317,49 +393,56 @@ class _StepSheetState extends State<_StepSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    // Scrolls when the keyboard leaves too little room (landscape, big text).
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('Step',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(
-                  value: 'key',
-                  label: Text('Key'),
-                  icon: Icon(Icons.keyboard)),
-              ButtonSegment(
-                  value: 'text',
-                  label: Text('Text'),
-                  icon: Icon(Icons.text_fields)),
-              ButtonSegment(
-                  value: 'launch',
-                  label: Text('Launch'),
-                  icon: Icon(Icons.open_in_new)),
-              ButtonSegment(
-                  value: 'delay',
-                  label: Text('Wait'),
-                  icon: Icon(Icons.timer_outlined)),
-            ],
-            selected: {_type},
-            showSelectedIcon: false,
-            onSelectionChanged: (s) => setState(() => _type = s.first),
-          ),
-          const SizedBox(height: 16),
-          ..._fields(),
-          const SizedBox(height: 16),
-          Row(children: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel')),
-            const Spacer(),
-            FilledButton(onPressed: _done, child: const Text('Done')),
-          ]),
-        ],
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Step',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                    value: 'key',
+                    label: Text('Key'),
+                    icon: Icon(Icons.keyboard)),
+                ButtonSegment(
+                    value: 'text',
+                    label: Text('Text'),
+                    icon: Icon(Icons.text_fields)),
+                ButtonSegment(
+                    value: 'launch',
+                    label: Text('Launch'),
+                    icon: Icon(Icons.open_in_new)),
+                ButtonSegment(
+                    value: 'delay',
+                    label: Text('Wait'),
+                    icon: Icon(Icons.timer_outlined)),
+              ],
+              selected: {_type},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => setState(() {
+                _type = s.first;
+                _error = null;
+              }),
+            ),
+            const SizedBox(height: 16),
+            ..._fields(),
+            const SizedBox(height: 16),
+            Row(children: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel')),
+              const Spacer(),
+              FilledButton(onPressed: _done, child: const Text('Done')),
+            ]),
+          ],
+        ),
       ),
     );
   }
@@ -371,8 +454,11 @@ class _StepSheetState extends State<_StepSheet> {
           TextField(
             controller: _text,
             autofocus: true,
-            decoration: const InputDecoration(
-                labelText: 'Text to type', border: OutlineInputBorder()),
+            onChanged: (_) => _clearError(),
+            decoration: InputDecoration(
+                labelText: 'Text to type',
+                errorText: _error,
+                border: const OutlineInputBorder()),
           ),
         ];
       case 'launch':
@@ -380,10 +466,12 @@ class _StepSheetState extends State<_StepSheet> {
           TextField(
             controller: _launch,
             autofocus: true,
-            decoration: const InputDecoration(
+            onChanged: (_) => _clearError(),
+            decoration: InputDecoration(
                 labelText: 'App or URL',
                 hintText: 'https://…  or  vlc.exe',
-                border: OutlineInputBorder()),
+                errorText: _error,
+                border: const OutlineInputBorder()),
           ),
         ];
       case 'delay':
@@ -413,10 +501,12 @@ class _StepSheetState extends State<_StepSheet> {
           TextField(
             controller: _key,
             autofocus: true,
-            decoration: const InputDecoration(
+            onChanged: (_) => _clearError(),
+            decoration: InputDecoration(
                 labelText: 'Key',
-                hintText: 'c, f4, enter, esc, tab, up, delete…',
-                border: OutlineInputBorder()),
+                hintText: 'c, f4, enter, esc, tab, pagedown, delete…',
+                errorText: _error,
+                border: const OutlineInputBorder()),
           ),
         ];
     }

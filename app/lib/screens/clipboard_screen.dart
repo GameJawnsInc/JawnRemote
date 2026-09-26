@@ -14,7 +14,8 @@ class ClipboardScreen extends StatefulWidget {
 }
 
 class _ClipboardScreenState extends State<ClipboardScreen> {
-  bool _awaiting = false;
+  bool _busy = false; // waiting for the PC's clipboard
+  bool _fetched = false; // got an answer, so an empty preview means "no text"
 
   @override
   void initState() {
@@ -30,14 +31,6 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
 
   void _onClient() {
     if (!mounted) return;
-    if (_awaiting) {
-      _awaiting = false;
-      final text = widget.client.pcClipboard;
-      Clipboard.setData(ClipboardData(text: text));
-      _snack(text.isEmpty
-          ? 'The PC clipboard is empty.'
-          : 'Copied the PC clipboard to your phone.');
-    }
     setState(() {});
   }
 
@@ -64,13 +57,28 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
     _snack('Sent to the PC clipboard.');
   }
 
-  void _getFromPc() {
+  Future<void> _getFromPc() async {
     if (!widget.client.isConnected) {
       _snack('Not connected.');
       return;
     }
-    _awaiting = true;
-    widget.client.requestClipboard();
+    if (_busy) return;
+    setState(() => _busy = true);
+    final text = await widget.client.fetchClipboard();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (text != null) _fetched = true;
+    });
+    if (text == null) {
+      _snack('The PC didn\'t answer. Try again.');
+    } else if (text.isEmpty) {
+      // Files or an image on the PC: leave the phone's clipboard alone.
+      _snack('The PC clipboard has no text (it may hold an image or files).');
+    } else {
+      await Clipboard.setData(ClipboardData(text: text));
+      _snack('Copied the PC clipboard to your phone.');
+    }
   }
 
   /// Quick View: pull a one-off screenshot of the PC and open it in a
@@ -82,11 +90,24 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
       return;
     }
     final nav = Navigator.of(context);
+    // Back or Cancel closes the spinner; that counts as giving up.
+    var spinnerUp = true;
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+      builder: (dctx) => AlertDialog(
+        content: const Row(children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 16),
+          Expanded(child: Text('Capturing the PC screen…')),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(dctx).pop(),
+              child: const Text('Cancel')),
+        ],
+      ),
+    ).whenComplete(() => spinnerUp = false);
     List<Map<String, dynamic>> displays = const [];
     int display = 0;
     Uint8List? png;
@@ -102,7 +123,8 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
     } catch (e) {
       err = e.toString();
     }
-    if (!mounted) return;
+    // Canceled: no viewer, no snack, and don't pop this screen instead.
+    if (!mounted || !spinnerUp) return;
     nav.pop(); // dismiss the loading spinner
     if (png == null) {
       _snack(err ?? 'Couldn\'t capture the screen.');
@@ -153,6 +175,7 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
               title: 'Get from PC',
               subtitle: 'Pull the PC clipboard onto your phone.',
               onTap: _getFromPc,
+              busy: _busy,
             ),
             const SizedBox(height: 24),
             const Text('PC CLIPBOARD',
@@ -171,7 +194,11 @@ class _ClipboardScreenState extends State<ClipboardScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                pc.isEmpty ? '(tap "Get from PC" to fetch)' : pc,
+                pc.isNotEmpty
+                    ? pc
+                    : _fetched
+                        ? '(no text on the PC clipboard)'
+                        : '(tap "Get from PC" to fetch)',
                 style: TextStyle(
                   color: pc.isEmpty ? Colors.white38 : Colors.white,
                   fontStyle: pc.isEmpty ? FontStyle.italic : FontStyle.normal,
@@ -204,11 +231,13 @@ class _ActionCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final bool busy; // shows a spinner and ignores taps
   const _ActionCard({
     required this.icon,
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.busy = false,
   });
 
   @override
@@ -218,7 +247,7 @@ class _ActionCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onTap,
+        onTap: busy ? null : onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(children: [
@@ -238,7 +267,13 @@ class _ActionCard extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: Colors.white38),
+            if (busy)
+              const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+            else
+              const Icon(Icons.chevron_right, color: Colors.white38),
           ]),
         ),
       ),
