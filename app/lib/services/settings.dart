@@ -102,12 +102,29 @@ class Settings extends ChangeNotifier {
   /// Replace the host with [oldKey], keeping its position — used when editing a
   /// host whose ip/port (and therefore key) may have changed.
   Future<void> replaceHost(String oldKey, RemoteHost h) async {
+    if (h.key != oldKey) {
+      // Edited onto another saved PC's ip:port: merge into this entry so keys
+      // stay unique, keeping a MAC the other one had learned.
+      final dup = hosts.where((e) => e.key == h.key).toList();
+      if (dup.isNotEmpty && h.mac.isEmpty && dup.first.mac.isNotEmpty) {
+        h = h.copyWith(mac: dup.first.mac);
+      }
+      hosts.removeWhere((e) => e.key == h.key);
+    }
     final i = hosts.indexWhere((e) => e.key == oldKey);
     if (i >= 0) {
       hosts[i] = h;
     } else {
       hosts.insert(0, h);
     }
+    await _saveHosts();
+  }
+
+  /// Put a removed host back at [index] (Undo). No-op if a host with the same
+  /// key was added again in the meantime.
+  Future<void> insertHost(int index, RemoteHost h) async {
+    if (hosts.any((e) => e.key == h.key)) return;
+    hosts.insert(index.clamp(0, hosts.length), h);
     await _saveHosts();
   }
 

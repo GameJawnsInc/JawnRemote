@@ -2,14 +2,19 @@ package com.jawnstoninc.jawnremote
 
 import android.app.Activity
 import android.content.Intent
+import android.hardware.input.InputManager
 import android.net.Uri
+import android.os.Handler
 import android.provider.OpenableColumns
 import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.WindowManager
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import org.flame_engine.gamepads_android.GamepadsCompatibleActivity
 import java.io.File
 
 /**
@@ -17,17 +22,28 @@ import java.io.File
  *
  *  - "jawnremote/volume" captures the hardware volume rocker while the remote is
  *    connected and forwards it to Flutter (which sends the volume keys to the PC).
+ *    It also toggles keep-screen-on and physical-controller capture.
  *
  *  - "jawnremote/files" exposes the Storage Access Framework for file transfer:
  *    pickFile (ACTION_OPEN_DOCUMENT) and saveFile (ACTION_CREATE_DOCUMENT). SAF
  *    needs no storage permission, so the app stays INTERNET-only. We do this in
  *    the app's own Activity rather than pulling a file-picker plugin (that keeps
  *    the dependency set tiny and dodges plugin/Gradle-toolchain breakage).
+ *
+ * It also implements GamepadsCompatibleActivity: the gamepads plugin casts the
+ * Activity to it on attach and registers its handlers here. We feed it input
+ * only while the Gamepad screen asks for it (padCapture), so a controller's
+ * keys reach the app normally everywhere else.
  */
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterActivity(), GamepadsCompatibleActivity {
     private val channelName = "jawnremote/volume"
     private var channel: MethodChannel? = null
     private var intercept = false
+
+    private var padCapture = false
+    private var padKeyHandler: ((KeyEvent) -> Boolean)? = null
+    private var padMotionHandler: ((MotionEvent) -> Boolean)? = null
+    private var padDeviceListener: InputManager.InputDeviceListener? = null
 
     private val fileChannelName = "jawnremote/files"
     private var fileChannel: MethodChannel? = null
@@ -43,6 +59,19 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "setIntercept" -> {
                     intercept = call.arguments as? Boolean ?: false
+                    result.success(null)
+                }
+                "setKeepScreenOn" -> {
+                    val on = call.arguments as? Boolean ?: false
+                    if (on) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                    result.success(null)
+                }
+                "setPadCapture" -> {
+                    padCapture = call.arguments as? Boolean ?: false
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -210,6 +239,45 @@ class MainActivity : FlutterActivity() {
             return true // swallow the matching up-event (suppresses the volume HUD)
         }
         return super.onKeyUp(keyCode, event)
+    }
+
+    // ---- GamepadsCompatibleActivity (physical controller -> gamepads plugin) ----
+
+    override fun registerInputDeviceListener(
+        listener: InputManager.InputDeviceListener, handler: Handler?) {
+        val im = getSystemService(INPUT_SERVICE) as InputManager
+        padDeviceListener?.let { im.unregisterInputDeviceListener(it) }
+        padDeviceListener = listener
+        im.registerInputDeviceListener(listener, handler)
+    }
+
+    override fun registerKeyEventHandler(handler: (KeyEvent) -> Boolean) {
+        padKeyHandler = handler
+    }
+
+    override fun registerMotionEventHandler(handler: (MotionEvent) -> Boolean) {
+        padMotionHandler = handler
+    }
+
+    // The plugin's handlers return true (consume) only for controller input, so
+    // everything else, including the volume rocker (onKeyDown), falls through to
+    // super as usual.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (padCapture && padKeyHandler?.invoke(event) == true) return true
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (padCapture && padMotionHandler?.invoke(ev) == true) return true
+        return super.dispatchGenericMotionEvent(ev)
+    }
+
+    override fun onDestroy() {
+        padDeviceListener?.let {
+            (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(it)
+        }
+        padDeviceListener = null
+        super.onDestroy()
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {

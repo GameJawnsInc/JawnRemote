@@ -21,6 +21,10 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   String serverMac = '';
   String lastError = '';
 
+  /// The server's reason when it rejected our hello ('bad_pin', 'locked', …);
+  /// '' otherwise.
+  String authError = '';
+
   /// Quick-launch apps configured on the PC (empty for older servers, which
   /// makes the Apps screen fall back to its built-in defaults).
   List<Map<String, dynamic>> serverApps = [];
@@ -40,6 +44,10 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   bool _wantConnected = false;
   bool _everConnected = false;
   int _retry = 0;
+  int _failStreak = 0; // failed attempts in a row before the first welcome
+  // Bumped by every connect attempt and by disconnect(); an attempt that
+  // finishes after being superseded throws its socket away.
+  int _gen = 0;
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
   Timer? _probeTimer; // handshake watchdog / app-resume probe
@@ -55,9 +63,16 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   /// In-flight virtual-gamepad plug request (padconnect -> padstatus).
   Completer<bool>? _padPending;
 
+  /// In-flight clipboard request (clipget -> clip).
+  Completer<String?>? _clipPending;
+
   /// Whether the PC reported a virtual gamepad is available (ViGEmBus present).
   bool padReady = false;
   String padError = '';
+
+  /// True when the last [padConnect] got no reply at all (link down, or a
+  /// server too old to know the gamepad) rather than a driver failure.
+  bool padNoReply = false;
 
   // Reconnect backoff (ms) by attempt — the first retry is near-instant.
   static const List<int> _backoffMs = [200, 500, 1000, 2000, 3000, 5000];
@@ -77,6 +92,21 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   bool get isReconnecting =>
       _everConnected && state == ConnState.connecting && _wantConnected;
 
+  /// The PIN this client connects with (the one last passed to [connect]).
+  String get pin => _pin;
+
+  /// True once the PC has accepted us since the last [connect].
+  bool get everConnected => _everConnected;
+
+  /// True while a first connect keeps failing (3+ attempts in a row). It keeps
+  /// retrying — a PC that's booting connects on its own — and [lastError]
+  /// says why the attempts fail.
+  bool get struggling =>
+      !_everConnected &&
+      _wantConnected &&
+      state == ConnState.connecting &&
+      _failStreak >= 3;
+
   Future<void> connect(String host, int port, String pin) async {
     _host = host;
     _port = port;
@@ -84,12 +114,16 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
     _wantConnected = true;
     _everConnected = false;
     _retry = 0;
+    _failStreak = 0;
+    lastError = '';
+    authError = '';
     await _open();
   }
 
   void disconnect() {
     _wantConnected = false;
     _everConnected = false;
+    _gen++; // a connect still in flight must not come back to life
     _reconnectTimer?.cancel();
     _stopTimers();
     _cleanupSocket();
@@ -97,6 +131,7 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _open() async {
+    final gen = ++_gen;
     _reconnectTimer?.cancel();
     _stopTimers();
     _cleanupSocket();
@@ -104,11 +139,23 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final s = await Socket.connect(_host, _port,
           timeout: const Duration(seconds: 6));
+      if (gen != _gen || !_wantConnected) {
+        s.destroy(); // superseded by a newer attempt or disconnect()
+        return;
+      }
       s.setOption(SocketOption.tcpNoDelay, true);
       _sock = s;
       _buf.clear();
       _lastInbound = DateTime.now();
-      s.listen(_onData, onError: _onError, onDone: _onDone, cancelOnError: true);
+      // Bound to this socket: once we drop it ourselves (reconnect, rejected
+      // PIN, disconnect) its late onDone/onError must not touch newer state.
+      s.listen((d) {
+        if (identical(_sock, s)) _onData(d);
+      }, onError: (Object e) {
+        if (identical(_sock, s)) _onError(e);
+      }, onDone: () {
+        if (identical(_sock, s)) _onDone();
+      }, cancelOnError: true);
       _sendRaw({'t': 'hello', 'pin': _pin, 'name': deviceName});
       // Handshake watchdog: if no "welcome" arrives, drop and retry.
       _probeTimer?.cancel();
@@ -116,15 +163,26 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
         if (state == ConnState.connecting) _onDead();
       });
     } catch (e) {
+      if (gen != _gen) return; // superseded; the newer attempt owns the state
       lastError = _friendly(e);
       _cleanupSocket();
-      if (_wantConnected) {
+      if (_wantConnected && !_everConnected && _unfixable(e)) {
+        // A malformed address never starts working — show the error instead
+        // of retrying forever.
+        _wantConnected = false;
+        _reconnectTimer?.cancel();
+        _stopTimers();
+        _setState(ConnState.error);
+      } else if (_wantConnected) {
         _scheduleReconnect();
       } else {
         _setState(ConnState.error);
       }
     }
   }
+
+  static bool _unfixable(Object e) =>
+      e is ArgumentError || e.toString().contains('Failed host lookup');
 
   void _onData(List<int> data) {
     _lastInbound = DateTime.now(); // any byte proves the link is alive
@@ -151,12 +209,15 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
           serverName = (msg['server'] ?? _host).toString();
           serverMac = (msg['mac'] ?? '').toString();
           _retry = 0;
+          _failStreak = 0;
           _everConnected = true;
           _probeTimer?.cancel(); // handshake succeeded
           _setState(ConnState.connected);
           _startHeartbeat();
         } else {
+          authError = (msg['err'] ?? '').toString();
           _wantConnected = false;
+          _stopTimers(); // incl. the handshake watchdog
           _setState(ConnState.authFailed);
           _cleanupSocket();
         }
@@ -170,6 +231,9 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'clip':
         pcClipboard = (msg['s'] ?? '').toString();
+        final c = _clipPending;
+        _clipPending = null;
+        if (c != null && !c.isCompleted) c.complete(pcClipboard);
         notifyListeners();
         break;
       case 'shot':
@@ -200,6 +264,7 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
       case 'padstatus':
         padReady = msg['ok'] == true;
         padError = (msg['err'] ?? '').toString();
+        padNoReply = false;
         final c = _padPending;
         _padPending = null;
         if (c != null && !c.isCompleted) c.complete(padReady);
@@ -241,7 +306,10 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   /// it and reconnect on the fastest backoff step.
   void _onDead() {
     if (!_wantConnected) return;
-    lastError = 'Connection lost — reconnecting…';
+    lastError = _everConnected
+        ? 'Connection lost — reconnecting…'
+        : 'The PC accepted the connection but didn\'t answer — '
+            'is JawnRemote Server running on that port?';
     _stopTimers();
     _cleanupSocket();
     _retry = 0;
@@ -252,7 +320,8 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
     lastError = _friendly(e);
     _stopTimers();
     _cleanupSocket();
-    if (_wantConnected && state != ConnState.authFailed) {
+    if (state == ConnState.authFailed) return; // stay on the Wrong PIN screen
+    if (_wantConnected) {
       _scheduleReconnect();
     } else {
       _setState(ConnState.error);
@@ -262,7 +331,12 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void _onDone() {
     _stopTimers();
     _cleanupSocket();
-    if (_wantConnected && state != ConnState.authFailed) {
+    if (state == ConnState.authFailed) return; // stay on the Wrong PIN screen
+    if (!_everConnected) {
+      lastError = 'The PC closed the connection — '
+          'is JawnRemote Server running on that port?';
+    }
+    if (_wantConnected) {
       _scheduleReconnect();
     } else {
       _setState(ConnState.disconnected);
@@ -272,6 +346,7 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void _scheduleReconnect() {
     _stopTimers();
     if (_reconnectTimer?.isActive ?? false) return; // already pending
+    if (!_everConnected) _failStreak++;
     _setState(ConnState.connecting);
     final delay = _backoffMs[_retry.clamp(0, _backoffMs.length - 1)];
     _retry = (_retry + 1).clamp(0, _backoffMs.length - 1);
@@ -305,10 +380,11 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _cleanupSocket() {
+    final s = _sock;
+    _sock = null; // first: destroy() may deliver onDone synchronously
     try {
-      _sock?.destroy();
+      s?.destroy();
     } catch (_) {}
-    _sock = null;
   }
 
   void _setState(ConnState s) {
@@ -327,6 +403,7 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String _friendly(Object e) {
+    if (e is ArgumentError) return 'Invalid port.';
     final s = e.toString();
     if (s.contains('refused')) {
       return 'Connection refused — is the server running?';
@@ -335,7 +412,15 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
       return 'Timed out — check the IP and that the firewall allows port $_port.';
     }
     if (s.contains('Network is unreachable')) return 'Network unreachable.';
-    return s;
+    if (s.contains('No route to host') ||
+        s.contains('Host is down') ||
+        s.contains('Host is unreachable')) {
+      return 'Can\'t reach the PC — is it on and on this Wi-Fi?';
+    }
+    if (s.contains('Failed host lookup')) {
+      return 'That address isn\'t valid — enter the IP shown in the server window.';
+    }
+    return s.replaceFirst('SocketException: ', '');
   }
 
   // ---- input API ----
@@ -354,6 +439,24 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
   void requestClipboard() => _sendRaw({'t': 'clipget'});
   void ping() => _sendRaw({'t': 'ping'});
 
+  /// Ask the PC for its clipboard. Resolves with the text ('' when the PC
+  /// clipboard holds no text, e.g. files or an image), or null if no reply
+  /// arrives within 5 s. Concurrent calls share one request.
+  Future<String?> fetchClipboard() {
+    final prev = _clipPending;
+    if (prev != null && !prev.isCompleted) return prev.future;
+    final c = Completer<String?>();
+    _clipPending = c;
+    _sendRaw({'t': 'clipget'});
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!c.isCompleted) {
+        if (identical(_clipPending, c)) _clipPending = null;
+        c.complete(null);
+      }
+    });
+    return c.future;
+  }
+
   // ---- virtual gamepad (stateful: each message is the full current state) ----
   /// Ask the PC to plug in a virtual Xbox 360 pad. Resolves true if the driver
   /// is present and the pad is live, false otherwise (resolves false on timeout
@@ -363,10 +466,12 @@ class RemoteClient extends ChangeNotifier with WidgetsBindingObserver {
     if (prev != null && !prev.isCompleted) return prev.future;
     final c = Completer<bool>();
     _padPending = c;
+    padNoReply = false;
     _sendRaw({'t': 'padconnect'});
     Future.delayed(const Duration(seconds: 6), () {
       if (!c.isCompleted) {
         if (identical(_padPending, c)) _padPending = null;
+        padNoReply = true;
         c.complete(false);
       }
     });

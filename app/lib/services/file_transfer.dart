@@ -36,10 +36,14 @@ class FileTransfer extends ChangeNotifier {
   final RemoteClient client;
   FileTransfer(this.client) {
     client.onFileFrame = _onFrame;
+    _wasConnected = client.isConnected;
+    client.addListener(_onClientState);
+    _sweepCache();
   }
 
   static const int _chunk = 64 * 1024;
   static const int _window = 8; // max in-flight (unacked) chunks
+  static const int _maxBytes = 2 * 1024 * 1024 * 1024; // the PC's 2 GB cap
 
   // SAF file access lives in the app's own MainActivity (no plugin needed).
   static const MethodChannel _ch = MethodChannel('jawnremote/files');
@@ -50,10 +54,44 @@ class FileTransfer extends ChangeNotifier {
     return _cacheDirPath!;
   }
 
+  /// Deletes our own cache files (pick_* upload copies, jawn_* received
+  /// files) older than a day. Nothing this run still uses is that old, and
+  /// earlier runs' received files are no longer reachable from [received].
+  Future<void> _sweepCache() async {
+    try {
+      final path = await _tempDir();
+      if (path == '.') return;
+      final cutoff = DateTime.now().subtract(const Duration(hours: 24));
+      await for (final e in Directory(path).list(followLinks: false)) {
+        final n = e.path.split('/').last;
+        if (e is! File || !(n.startsWith('pick_') || n.startsWith('jawn_'))) {
+          continue;
+        }
+        try {
+          if ((await e.lastModified()).isBefore(cutoff)) await e.delete();
+        } catch (_) {}
+      }
+    } catch (_) {
+      // No native side (tests / other platforms): nothing to sweep.
+    }
+  }
+
+  /// True while [pickFile] runs: the system picker is open, then the picked
+  /// document is copied into our cache (which takes a while for a big video).
+  bool preparing = false;
+
   /// Opens the system document picker. Returns {path, name, size} or null.
   Future<Map?> pickFile() async {
-    final r = await _ch.invokeMethod('pickFile');
-    return r is Map ? r : null;
+    if (preparing) return null; // one pick at a time
+    preparing = true;
+    notifyListeners();
+    try {
+      final r = await _ch.invokeMethod('pickFile');
+      return r is Map ? r : null;
+    } finally {
+      preparing = false;
+      notifyListeners();
+    }
   }
 
   // ---- outgoing state ----
@@ -65,10 +103,18 @@ class FileTransfer extends ChangeNotifier {
   String? _txId;
   int _txAcked = 0; // number of chunks acked so far
   bool _txCanceled = false;
+  bool _txLinkLost = false; // the link dropped mid-upload
+  String? _txRejected; // the PC's err when it refused the upload
+  bool _txFinishing = false; // fileend sent: too late to cancel
   Completer<void>? _ackTick; // fires whenever an ack advances the window
   Completer<bool>? _doneWaiter; // fires on the final filedone
+  bool _wasConnected = false;
 
   bool get isSending => txState == TxState.sending;
+
+  /// False once the upload can no longer be canceled (waiting for the PC's
+  /// final confirmation).
+  bool get canCancel => txState == TxState.sending && !_txFinishing;
   double get txProgress =>
       txTotal == 0 ? 0 : (txSent / txTotal).clamp(0.0, 1.0);
 
@@ -94,29 +140,63 @@ class FileTransfer extends ChangeNotifier {
 
   // ===================== outgoing (phone -> PC) =====================
 
+  /// Upload [path] to the PC as [name]. A `pick_*` source (our own picker
+  /// copy) is deleted afterwards, whatever the outcome.
   Future<void> sendFile(String path, String name) async {
+    try {
+      await _sendFile(path, name);
+    } finally {
+      if (path.split('/').last.startsWith('pick_')) {
+        try {
+          await File(path).delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  Future<void> _sendFile(String path, String name) async {
     if (txState == TxState.sending) return; // one upload at a time
     txName = name;
     txTotal = 0;
     txSent = 0;
     txError = '';
+    _txId = null;
+    _txCanceled = false;
+    _txFinishing = false;
     txState = TxState.sending;
     notifyListeners();
     // Opening the system file picker backgrounds the app, which can briefly
     // drop the socket. Give the auto-reconnect up to ~10 s to come back before
     // giving up, so the first send after picking doesn't fail spuriously.
-    for (var i = 0; i < 50 && !client.isConnected; i++) {
+    for (var i = 0; i < 50 && !client.isConnected && !_txCanceled; i++) {
       await Future.delayed(const Duration(milliseconds: 200));
+    }
+    if (_txCanceled) {
+      _txFail('Canceled.');
+      return;
     }
     if (!client.isConnected) {
       _txFail('Not connected — try again.');
       return;
     }
-    final file = File(path);
-    txTotal = await file.length();
+    // From here a link drop fails the upload (see _onClientState).
     _txId = _newId();
     _txAcked = 0;
-    _txCanceled = false;
+    _txLinkLost = false;
+    _txRejected = null;
+    final file = File(path);
+    try {
+      txTotal = await file.length();
+    } catch (_) {
+      _txId = null;
+      _txFail('Couldn\'t read the file.');
+      return;
+    }
+    if (txTotal > _maxBytes) {
+      _txId = null;
+      _txFail('Files over 2 GB can\'t be sent.');
+      return;
+    }
     _doneWaiter = Completer<bool>();
     notifyListeners();
 
@@ -128,6 +208,7 @@ class FileTransfer extends ChangeNotifier {
       final pending = <int>[];
       await for (final block in file.openRead()) {
         if (_txCanceled) throw const _Canceled();
+        _checkTxAbort();
         pending.addAll(block);
         while (pending.length >= _chunk) {
           final chunk = Uint8List.fromList(pending.sublist(0, _chunk));
@@ -146,6 +227,14 @@ class FileTransfer extends ChangeNotifier {
         i++;
       }
       inner.close();
+      // Last chance to honor a cancel / link drop (an empty file never hit a
+      // per-chunk check).
+      if (_txCanceled) throw const _Canceled();
+      _checkTxAbort();
+      // The PC saves the file as soon as it gets fileend; a cancel after this
+      // point would claim a cancel for a file that's already there.
+      _txFinishing = true;
+      notifyListeners();
       client.fileEnd(_txId!, ds.value!.toString());
       final ok = await _doneWaiter!.future
           .timeout(const Duration(seconds: 30), onTimeout: () => false);
@@ -153,7 +242,7 @@ class FileTransfer extends ChangeNotifier {
         txSent = txTotal;
         txState = TxState.done;
       } else {
-        _txFail('The PC didn\'t confirm the file.');
+        _txFail(_txAbortReason ?? 'The PC didn\'t confirm the file.');
         return;
       }
     } on _Canceled {
@@ -167,21 +256,41 @@ class FileTransfer extends ChangeNotifier {
     } finally {
       _ackTick = null;
       _doneWaiter = null;
+      _txId = null;
     }
     notifyListeners();
   }
 
+  /// Why the current upload can't go on (link dropped / the PC refused it),
+  /// or null.
+  String? get _txAbortReason {
+    if (_txLinkLost) return 'Connection lost — try again.';
+    final err = _txRejected;
+    if (err == null) return null;
+    return err.isEmpty
+        ? 'The PC couldn\'t save the file.'
+        : 'The PC couldn\'t save the file: $err';
+  }
+
+  void _checkTxAbort() {
+    final why = _txAbortReason;
+    if (why != null) throw why; // a String: shown as-is by sendFile's catch
+  }
+
   Future<void> _awaitWindow(int i) async {
-    while (!_txCanceled && (i - _txAcked) >= _window) {
+    while (!_txCanceled &&
+        _txAbortReason == null &&
+        (i - _txAcked) >= _window) {
       _ackTick = Completer<void>();
       await _ackTick!.future.timeout(const Duration(seconds: 20),
           onTimeout: () => throw 'Transfer stalled — connection lost?');
     }
     if (_txCanceled) throw const _Canceled();
+    _checkTxAbort();
   }
 
   void cancelOutgoing() {
-    if (txState != TxState.sending) return;
+    if (!canCancel) return;
     _txCanceled = true;
     _ackTick?.complete();
     _ackTick = null;
@@ -221,6 +330,13 @@ class FileTransfer extends ChangeNotifier {
         break;
       case 'filedone':
         if (msg['id'] == _txId && !(_doneWaiter?.isCompleted ?? true)) {
+          if (msg['ok'] != true) {
+            // The PC gave up (disk full, too big, …) — possibly mid-upload,
+            // so stop streaming now rather than stalling on missing acks.
+            _txRejected ??= (msg['err'] ?? '').toString();
+            _ackTick?.complete();
+            _ackTick = null;
+          }
           _doneWaiter?.complete(msg['ok'] == true);
         }
         break;
@@ -243,8 +359,28 @@ class FileTransfer extends ChangeNotifier {
     _rxChain = _rxChain.then((_) => task()).catchError((_) {});
   }
 
+  /// A transfer belongs to one server session: when the link drops, the PC's
+  /// side of it is gone, so stop waiting for frames that will never come.
+  void _onClientState() {
+    final now = client.isConnected;
+    if (_wasConnected && !now) {
+      // Queued behind the old session's frames, ahead of any new ones.
+      _enqueueRx(() async {
+        if (_rxId != null) await _abortIncoming();
+      });
+      if (txState == TxState.sending && _txId != null) {
+        _txLinkLost = true;
+        _ackTick?.complete();
+        _ackTick = null;
+        final d = _doneWaiter;
+        if (d != null && !d.isCompleted) d.complete(false);
+      }
+    }
+    _wasConnected = now;
+  }
+
   Future<void> _beginIncoming(Map msg) async {
-    await _closeRxSink();
+    await _deleteRx(); // drops a previous push that never finished
     _rxId = msg['id']?.toString();
     rxName = (msg['name'] ?? 'file').toString();
     _rxWritten = 0;
@@ -274,6 +410,11 @@ class FileTransfer extends ChangeNotifier {
       final id = _rxId ?? '';
       await _deleteRx();
       client.fileDone(id, false, err: 'decode error');
+      _rxId = null;
+      rxName = '';
+      rxTotal = 0;
+      rxReceived = 0;
+      notifyListeners();
     }
   }
 
@@ -363,6 +504,7 @@ class FileTransfer extends ChangeNotifier {
   @override
   void dispose() {
     if (identical(client.onFileFrame, _onFrame)) client.onFileFrame = null;
+    client.removeListener(_onClientState);
     super.dispose();
   }
 }

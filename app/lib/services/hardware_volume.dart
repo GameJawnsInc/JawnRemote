@@ -35,4 +35,23 @@ class HardwareVolume {
       // Channel not available (non-Android / engine not ready): ignore.
     }
   }
+
+  // The two below are static so callers don't construct another
+  // HardwareVolume (the constructor takes over the channel's call handler).
+
+  /// Keep the phone's screen from timing out (FLAG_KEEP_SCREEN_ON) while [on].
+  static Future<void> setKeepScreenOn(bool on) async {
+    try {
+      await _channel.invokeMethod('setKeepScreenOn', on);
+    } catch (_) {}
+  }
+
+  /// While [on], the native side hands physical controller key/motion events
+  /// to the gamepads plugin (Gamepad screen forwarding); otherwise they reach
+  /// the app as usual.
+  static Future<void> setPadCapture(bool on) async {
+    try {
+      await _channel.invokeMethod('setPadCapture', on);
+    } catch (_) {}
+  }
 }
