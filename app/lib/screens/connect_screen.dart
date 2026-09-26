@@ -15,25 +15,55 @@ class ConnectScreen extends StatefulWidget {
 
 class _ConnectScreenState extends State<ConnectScreen> {
   final Map<String, DiscoveredServer> _discovered = {};
+  final Map<String, DateTime> _seen = {}; // last reply per discovered key
   StreamSubscription<DiscoveredServer>? _sub;
+  Timer? _pruneTimer;
+
+  /// A PC that hasn't answered for this long (~3 probes) is dropped.
+  static const _staleAfter = Duration(seconds: 7);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _startDiscovery());
+    _pruneTimer = Timer.periodic(
+        const Duration(milliseconds: 2500), (_) => _pruneDiscovered());
   }
 
   void _startDiscovery() {
     final scope = AppScope.of(context);
     _sub ??= scope.discovery.stream.listen((srv) {
       if (!mounted) return;
-      setState(() => _discovered[srv.key] = srv);
+      setState(() {
+        _discovered[srv.key] = srv;
+        _seen[srv.key] = DateTime.now();
+      });
     });
     scope.discovery.start();
   }
 
+  /// Forget PCs that stopped answering (shut down, changed IP).
+  void _pruneDiscovered() {
+    // Discovery is stopped while the remote is open, and nothing is shown
+    // under a pushed screen or dialog — don't expire PCs meanwhile.
+    if (!mounted || ModalRoute.isCurrentOf(context) != true) return;
+    final cutoff = DateTime.now().subtract(_staleAfter);
+    final stale = [
+      for (final e in _seen.entries)
+        if (e.value.isBefore(cutoff)) e.key
+    ];
+    if (stale.isEmpty) return;
+    setState(() {
+      for (final k in stale) {
+        _seen.remove(k);
+        _discovered.remove(k);
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _pruneTimer?.cancel();
     _sub?.cancel();
     super.dispose();
   }
@@ -46,9 +76,28 @@ class _ConnectScreenState extends State<ConnectScreen> {
         .then((_) {
       if (mounted) {
         scope.discovery.start();
-        setState(() {});
+        // A fresh grace period, so PCs don't blink out before the first
+        // reply to the restarted discovery.
+        final now = DateTime.now();
+        setState(() => _seen.updateAll((_, _) => now));
       }
     });
+  }
+
+  void _removeHost(RemoteHost h) {
+    final settings = AppScope.of(context).settings;
+    final index = settings.hosts.indexWhere((e) => e.key == h.key);
+    settings.removeHost(h);
+    // The PIN, name and learned MAC go with it, so make it undoable.
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('Removed ${h.name}'),
+        behavior: SnackBarBehavior.floating,
+        persist: false, // an action would otherwise keep it up for good
+        action: SnackBarAction(
+            label: 'Undo', onPressed: () => settings.insertHost(index, h)),
+      ));
   }
 
   Future<void> _wake(RemoteHost h) async {
@@ -102,8 +151,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
         content: TextField(
           controller: ctrl,
           keyboardType: TextInputType.number,
+          textInputAction: TextInputAction.go,
           autofocus: true,
           decoration: const InputDecoration(hintText: 'Shown on the PC server'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
         ),
         actions: [
           TextButton(
@@ -126,6 +177,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
         final savedIps = saved.map((h) => h.ip).toSet();
         final discovered =
             _discovered.values.where((d) => !savedIps.contains(d.ip)).toList();
+        final anySavedOnline = saved.any((h) => _discovered.containsKey(h.key));
         return Scaffold(
           appBar: AppBar(
             title: const Text('JawnRemote'),
@@ -160,27 +212,32 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       key: ValueKey(h.key),
                       index: i,
                       host: h,
+                      // Answering discovery right now (no reply doesn't mean
+                      // off — UDP may just be blocked).
+                      online: _discovered.containsKey(h.key),
                       onTap: () => _open(h),
                       onWake: h.mac.isNotEmpty ? () => _wake(h) : null,
                       onEdit: () => _editHost(h),
-                      onDelete: () => scope.settings.removeHost(h),
+                      onDelete: () => _removeHost(h),
                     );
                   },
                 ),
               const _Header('Discovered on Wi-Fi'),
               if (discovered.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 4, 20, 4),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
                   child: Row(children: [
-                    SizedBox(
+                    const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2)),
-                    SizedBox(width: 14),
+                    const SizedBox(width: 14),
                     Expanded(
                         child: Text(
-                            'Searching… make sure the PC server is running on the same Wi-Fi.',
-                            style: TextStyle(color: Colors.white54))),
+                            anySavedOnline
+                                ? 'Looking for other PCs…'
+                                : 'Searching… make sure the PC server is running on the same Wi-Fi.',
+                            style: const TextStyle(color: Colors.white54))),
                   ]),
                 ),
               ...discovered.map((d) => _HostTile(
@@ -248,6 +305,7 @@ class _HostTile extends StatelessWidget {
 class _SavedTile extends StatelessWidget {
   final int index;
   final RemoteHost host;
+  final bool online;
   final VoidCallback onTap;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -256,6 +314,7 @@ class _SavedTile extends StatelessWidget {
     super.key,
     required this.index,
     required this.host,
+    this.online = false,
     required this.onTap,
     required this.onEdit,
     required this.onDelete,
@@ -277,9 +336,14 @@ class _SavedTile extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: ListTile(
-        leading: const Icon(Icons.computer),
+        leading: Badge(
+          isLabelVisible: online,
+          smallSize: 9,
+          backgroundColor: Colors.greenAccent,
+          child: const Icon(Icons.computer),
+        ),
         title: Text(host.name),
-        subtitle: Text('${host.ip}:${host.port}'),
+        subtitle: Text('${online ? 'Online · ' : ''}${host.ip}:${host.port}'),
         onTap: onTap,
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -328,6 +392,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
   late final TextEditingController _ip;
   late final TextEditingController _port;
   late final TextEditingController _pin;
+  String? _ipErr, _portErr;
 
   @override
   void initState() {
@@ -348,6 +413,45 @@ class _AddHostDialogState extends State<AddHostDialog> {
     super.dispose();
   }
 
+  void _submit() {
+    final editing = widget.initial != null;
+    var ip = _ip.text.trim();
+    // A pasted "ip:port" goes into both fields. Only a single colon, so an
+    // IPv6 literal is left alone.
+    final colon = ip.indexOf(':');
+    if (colon >= 0 && colon == ip.lastIndexOf(':')) {
+      final p = int.tryParse(ip.substring(colon + 1).trim());
+      if (p != null) {
+        ip = ip.substring(0, colon).trim();
+        _ip.text = ip;
+        _port.text = '$p';
+      }
+    }
+    final portText = _port.text.trim();
+    final port = portText.isEmpty ? 8770 : int.tryParse(portText);
+    setState(() {
+      _ipErr = ip.isEmpty ? 'Enter the PC\'s IP address' : null;
+      _portErr = (port == null || port < 1 || port > 65535)
+          ? 'Port must be 1–65535'
+          : null;
+    });
+    if (_ipErr != null || _portErr != null) return;
+    final name = _name.text.trim();
+    Navigator.pop(
+      context,
+      RemoteHost(
+        name: name.isEmpty ? ip : name,
+        ip: ip,
+        port: port!,
+        pin: _pin.text.trim(),
+        mac: widget.initial?.mac ?? '',
+        // Editing, or typing a name of your own, locks the name; the default
+        // stays auto-upgradable to the server's hostname on connect.
+        customName: editing || (name.isNotEmpty && name != 'My PC'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final editing = widget.initial != null;
@@ -357,19 +461,33 @@ class _AddHostDialogState extends State<AddHostDialog> {
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
               controller: _name,
+              textInputAction: TextInputAction.next,
               decoration: const InputDecoration(labelText: 'Name')),
           TextField(
               controller: _ip,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                  labelText: 'IP address', hintText: 'e.g. 10.0.0.210')),
+              textInputAction: TextInputAction.next,
+              onChanged: (_) {
+                if (_ipErr != null) setState(() => _ipErr = null);
+              },
+              decoration: InputDecoration(
+                  labelText: 'IP address',
+                  hintText: 'e.g. 10.0.0.210',
+                  errorText: _ipErr)),
           TextField(
               controller: _port,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Port')),
+              textInputAction: TextInputAction.next,
+              onChanged: (_) {
+                if (_portErr != null) setState(() => _portErr = null);
+              },
+              decoration:
+                  InputDecoration(labelText: 'Port', errorText: _portErr)),
           TextField(
               controller: _pin,
               keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _submit(),
               decoration: const InputDecoration(
                   labelText: 'PIN', hintText: 'shown on the PC server')),
         ]),
@@ -379,25 +497,7 @@ class _AddHostDialogState extends State<AddHostDialog> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel')),
         FilledButton(
-          onPressed: () {
-            final ip = _ip.text.trim();
-            if (ip.isEmpty) return;
-            final port = int.tryParse(_port.text.trim()) ?? 8770;
-            final name = _name.text.trim();
-            Navigator.pop(
-              context,
-              RemoteHost(
-                name: name.isEmpty ? ip : name,
-                ip: ip,
-                port: port,
-                pin: _pin.text.trim(),
-                mac: widget.initial?.mac ?? '',
-                // Editing locks the name; adding leaves it auto-upgradable
-                // to the server's hostname on connect.
-                customName: editing,
-              ),
-            );
-          },
+          onPressed: _submit,
           child: Text(editing ? 'Save' : 'Connect'),
         ),
       ],

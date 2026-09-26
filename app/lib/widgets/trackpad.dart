@@ -82,7 +82,9 @@ class _TrackpadState extends State<Trackpad> {
 
   void _endPointer(int pointer) {
     _positions.remove(pointer);
-    if (_positions.length < 2) _lastCentroid = null;
+    // Re-baseline on the fingers still down, or lifting one of three reads
+    // as a centroid jump (a stray scroll that also cancels the middle click).
+    _lastCentroid = _positions.length >= 2 ? _centroid() : null;
     if (_positions.isEmpty) _finish();
   }
 
@@ -130,7 +132,9 @@ class _TrackpadState extends State<Trackpad> {
     final k = s.scrollSpeed;
     final dir = s.naturalScroll ? 1.0 : -1.0;
     _scrollY += d.dy * k * dir;
-    _scrollX += d.dx * k * dir;
+    // Windows' WHEEL is +up (against screen Y) but HWHEEL is +right (with
+    // screen X), so X takes the opposite sign to scroll the same way as Y.
+    _scrollX -= d.dx * k * dir;
     final wy = _scrollY.truncate();
     final wx = _scrollX.truncate();
     if (wy != 0 || wx != 0) {
@@ -156,17 +160,22 @@ class _TrackpadState extends State<Trackpad> {
           child: AnimatedOpacity(
             opacity: _touching ? 0.0 : 1.0,
             duration: const Duration(milliseconds: 200),
-            child: const Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.touch_app_outlined, size: 46, color: Colors.white24),
-                SizedBox(height: 12),
-                Text('Drag to move  •  Tap to click',
-                    style: TextStyle(color: Colors.white38)),
-                SizedBox(height: 4),
-                Text('Two fingers: right-click or scroll',
-                    style: TextStyle(color: Colors.white24, fontSize: 12)),
-              ],
+            // Shrinks with a squeezed trackpad instead of overflowing.
+            child: const FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.touch_app_outlined,
+                      size: 46, color: Colors.white24),
+                  SizedBox(height: 12),
+                  Text('Drag to move  •  Tap to click',
+                      style: TextStyle(color: Colors.white38)),
+                  SizedBox(height: 4),
+                  Text('Two fingers: right-click or scroll',
+                      style: TextStyle(color: Colors.white24, fontSize: 12)),
+                ],
+              ),
             ),
           ),
         ),

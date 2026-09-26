@@ -28,6 +28,8 @@ class _RemoteScreenState extends State<RemoteScreen> {
   bool _saved = false;
   bool _started = false;
   bool _intercepting = false;
+  bool? _keepOnApplied; // last "Keep screen on" value sent to the platform
+  DateTime? _lastBack;
   RemoteClient? _client;
   final HardwareVolume _hwVolume = HardwareVolume();
 
@@ -56,6 +58,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
   void dispose() {
     _hwVolume.setIntercept(false); // restore normal volume-button behavior
     _hwVolume.onVolume = null;
+    if (_keepOnApplied == true) HardwareVolume.setKeepScreenOn(false);
     _client?.disconnect();
     super.dispose();
   }
@@ -70,8 +73,11 @@ class _RemoteScreenState extends State<RemoteScreen> {
         : (client.serverName.isNotEmpty ? client.serverName : widget.host.name);
     final mac =
         client.serverMac.isNotEmpty ? client.serverMac : widget.host.mac;
+    // The PIN the PC just accepted (it differs after "Re-enter PIN").
+    final pin = client.pin;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      scope.settings.upsertHost(widget.host.copyWith(name: name, mac: mac));
+      scope.settings
+          .upsertHost(widget.host.copyWith(name: name, mac: mac, pin: pin));
     });
   }
 
@@ -87,7 +93,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
   }
 
   Future<void> _reenterPin(RemoteClient client) async {
-    final ctrl = TextEditingController(text: widget.host.pin);
+    final ctrl = TextEditingController(text: client.pin);
     final pin = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -95,7 +101,9 @@ class _RemoteScreenState extends State<RemoteScreen> {
         content: TextField(
             controller: ctrl,
             keyboardType: TextInputType.number,
-            autofocus: true),
+            textInputAction: TextInputAction.go,
+            autofocus: true,
+            onSubmitted: (v) => Navigator.pop(ctx, v.trim())),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -105,9 +113,37 @@ class _RemoteScreenState extends State<RemoteScreen> {
         ],
       ),
     );
-    if (pin != null) {
+    if (pin != null && mounted) {
+      _saved = false; // save the new PIN once the PC accepts it
       client.connect(widget.host.ip, widget.host.port, pin);
     }
+  }
+
+  /// Back while the remote is live (an edge swipe on the trackpad counts)
+  /// needs a second press within 2 s before it drops the session.
+  void _onBackBlocked(bool didPop) {
+    final now = DateTime.now();
+    final messenger = ScaffoldMessenger.of(context);
+    final hinted = _lastBack != null &&
+        now.difference(_lastBack!) < const Duration(seconds: 2);
+    if (didPop) {
+      // Leaving (second back, the arrow, or back after the link dropped):
+      // don't carry the "press back again" hint over to the host list.
+      if (hinted) messenger.hideCurrentSnackBar();
+      return;
+    }
+    if (hinted) {
+      Navigator.of(context).pop();
+      return;
+    }
+    _lastBack = now;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(
+        content: Text('Press back again to disconnect'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ));
   }
 
   PopupMenuItem<String> _powerItem(String value, IconData icon, String label) =>
@@ -260,18 +296,25 @@ class _RemoteScreenState extends State<RemoteScreen> {
 
   /// Media + mouse buttons + keyboard, below the trackpad. Capped and
   /// scrollable so the column never overflows in landscape or when the soft
-  /// keyboard pushes the layout up.
-  Widget _bottomPanels(RemoteClient client) {
-    final maxH = MediaQuery.of(context).size.height * 0.62;
+  /// keyboard pushes the layout up. [avail] is the body height left over by
+  /// the app bar, system insets and the soft keyboard.
+  Widget _bottomPanels(RemoteClient client, double avail) {
+    final s = AppScope.of(context).settings;
+    // Minus the feature bar (~72); keeps roughly 45% for the trackpad.
+    final maxH = ((avail - 72) * 0.55).clamp(0.0, double.infinity);
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxH),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_media) _MediaBar(client: client),
+            // A panel whose feature was hidden in Settings would have no
+            // toggle left to close it.
+            if (_media && s.isFeatureVisible('media'))
+              _MediaBar(client: client),
             _MouseButtons(client: client),
-            if (_keyboard) KeyboardBar(client: client),
+            if (_keyboard && s.isFeatureVisible('keyboard'))
+              KeyboardBar(client: client),
           ],
         ),
       ),
@@ -290,8 +333,16 @@ class _RemoteScreenState extends State<RemoteScreen> {
           _intercepting = client.isConnected;
           _hwVolume.setIntercept(_intercepting); // capture rocker only while connected
         }
-        return Scaffold(
+        final keepOn = scope.settings.keepScreenOn;
+        if (keepOn != _keepOnApplied) {
+          _keepOnApplied = keepOn;
+          HardwareVolume.setKeepScreenOn(keepOn); // cleared again in dispose
+        }
+        final page = Scaffold(
           appBar: AppBar(
+            // The arrow is a deliberate tap: leave at once (only system
+            // back / edge swipes need the second press).
+            leading: BackButton(onPressed: () => Navigator.of(context).pop()),
             title: Row(children: [
               _StatusDot(client.state),
               const SizedBox(width: 10),
@@ -313,7 +364,15 @@ class _RemoteScreenState extends State<RemoteScreen> {
               ),
             ],
           ),
-          body: _body(client, scope),
+          // No bottom inset otherwise: the mouse buttons would sit under the
+          // system nav bar (edge-to-edge). The app bar already covers the top.
+          body: SafeArea(top: false, child: _body(client, scope)),
+        );
+        final live = client.isConnected || client.isReconnecting;
+        return PopScope(
+          canPop: !live,
+          onPopInvokedWithResult: (didPop, _) => _onBackBlocked(didPop),
+          child: page,
         );
       },
     );
@@ -329,8 +388,23 @@ class _RemoteScreenState extends State<RemoteScreen> {
         if (client.isReconnecting) {
           return _connectedView(client, scope, reconnecting: true);
         }
-        return _connectingMessage();
+        return _connectingMessage(client);
       case ConnState.authFailed:
+        // The PC refuses every PIN from this phone for a minute after too
+        // many wrong ones.
+        if (client.authError == 'locked') {
+          return _Message(
+            icon: Icons.lock_clock,
+            title: 'Too many tries',
+            detail: 'The PC paused PIN attempts from this phone for a minute. '
+                'Wait a moment, then try again.',
+            actionLabel: 'Try again',
+            onAction: () =>
+                client.connect(widget.host.ip, widget.host.port, client.pin),
+            secondaryLabel: 'Re-enter PIN',
+            onSecondary: () => _reenterPin(client),
+          );
+        }
         return _Message(
           icon: Icons.lock_outline,
           title: 'Wrong PIN',
@@ -346,33 +420,54 @@ class _RemoteScreenState extends State<RemoteScreen> {
           detail: client.lastError,
           actionLabel: 'Retry',
           onAction: () =>
-              client.connect(widget.host.ip, widget.host.port, widget.host.pin),
+              client.connect(widget.host.ip, widget.host.port, client.pin),
           secondaryLabel: widget.host.mac.isNotEmpty ? 'Wake PC' : null,
           onSecondary:
               widget.host.mac.isNotEmpty ? () => _wake(widget.host) : null,
         );
       case ConnState.disconnected:
-        return _connectingMessage();
+        return _connectingMessage(client);
     }
   }
 
-  Widget _connectingMessage() => _Message(
-        icon: Icons.wifi_tethering,
-        title: 'Connecting…',
-        detail: '${widget.host.ip}:${widget.host.port}',
+  Widget _connectingMessage(RemoteClient client) {
+    // A first connect that keeps failing (PC off or asleep, wrong IP, firewall)
+    // says why and offers Wake PC; it keeps retrying underneath, so a PC that
+    // is booting connects on its own.
+    if (client.struggling) {
+      final canWake = widget.host.mac.isNotEmpty;
+      return _Message(
+        icon: Icons.wifi_off,
+        title: 'Can\'t reach ${widget.host.name}',
+        detail: '${client.lastError.isNotEmpty ? '${client.lastError}\n' : ''}'
+            'Still trying ${widget.host.ip}:${widget.host.port}…',
         showSpinner: true,
+        secondaryLabel: canWake ? 'Wake PC' : null,
+        onSecondary: canWake ? () => _wake(widget.host) : null,
       );
+    }
+    return _Message(
+      icon: Icons.wifi_tethering,
+      title: 'Connecting…',
+      detail: '${widget.host.ip}:${widget.host.port}',
+      showSpinner: true,
+    );
+  }
 
   Widget _connectedView(RemoteClient client, AppScope scope,
       {required bool reconnecting}) {
-    return Column(children: [
-      _featureBar(client),
-      if (reconnecting) const _ReconnectBanner(),
-      Expanded(
-        child: Trackpad(client: client, settings: scope.settings),
-      ),
-      _bottomPanels(client),
-    ]);
+    // Sized from the real body height (after the soft keyboard and insets),
+    // not the window, so the bottom panels can't squeeze out the trackpad.
+    return LayoutBuilder(
+      builder: (context, box) => Column(children: [
+        _featureBar(client),
+        if (reconnecting) const _ReconnectBanner(),
+        Expanded(
+          child: Trackpad(client: client, settings: scope.settings),
+        ),
+        _bottomPanels(client, box.maxHeight),
+      ]),
+    );
   }
 }
 
@@ -459,20 +554,25 @@ class _FeatureCell extends StatelessWidget {
         children: [
           Icon(icon, color: fg, size: 24),
           const SizedBox(height: 3),
-          Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: fg,
-                fontSize: 11,
-                fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-              )),
+          // Nine cells share a phone's width: shrink a long label to fit
+          // rather than ellipsizing it ("Keyb…").
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(label,
+                maxLines: 1,
+                softWrap: false,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 11,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                )),
+          ),
         ],
       ),
     );
     return Padding(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
       child: Material(
         color: active ? const Color(0x334F8CFF) : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
@@ -662,7 +762,8 @@ class _Message extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Padding(
+      // Scrolls rather than clipping the buttons in landscape.
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,

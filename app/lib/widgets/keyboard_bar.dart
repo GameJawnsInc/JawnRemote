@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/remote_client.dart';
 
 /// Bottom keyboard panel: modifier toggles, special keys, and a text field
@@ -14,7 +15,19 @@ class KeyboardBar extends StatefulWidget {
 
 class _KeyboardBarState extends State<KeyboardBar> {
   final _controller = TextEditingController();
-  final _focus = FocusNode();
+  // With nothing in the field (on open, after Enter), Backspace can't change
+  // the text, so _onChanged never sees it. Gboard & co. send it as a key
+  // event instead — forward that one.
+  late final _focus = FocusNode(onKeyEvent: (node, e) {
+    if ((e is KeyDownEvent || e is KeyRepeatEvent) &&
+        e.logicalKey == LogicalKeyboardKey.backspace &&
+        _controller.text.isEmpty) {
+      c.key('backspace', _mods.toList());
+      if (_mods.isNotEmpty) setState(_mods.clear);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  });
   String _prev = '';
   final Set<String> _mods = {};
 
@@ -48,12 +61,17 @@ class _KeyboardBarState extends State<KeyboardBar> {
     final removed = _prev.length - cp - cs;
     final inserted = value.substring(cp, value.length - cs);
 
-    if (_mods.isNotEmpty &&
-        removed == 0 &&
-        inserted.length == 1 &&
-        inserted != '\n') {
-      // modifier shortcut, e.g. Ctrl+C
-      c.key(inserted.toLowerCase(), _mods.toList());
+    // One typed character, Enter or Backspace.
+    final singleKey = (removed == 0 && inserted.length == 1) ||
+        (removed == 1 && inserted.isEmpty);
+    if (_mods.isNotEmpty && singleKey) {
+      // modifier shortcut, e.g. Ctrl+C, Shift+Enter, Ctrl+Backspace
+      final k = inserted.isEmpty
+          ? 'backspace'
+          : inserted == '\n'
+              ? 'enter'
+              : inserted.toLowerCase();
+      c.key(k, _mods.toList());
       setState(_mods.clear);
     } else {
       for (var i = 0; i < removed; i++) {

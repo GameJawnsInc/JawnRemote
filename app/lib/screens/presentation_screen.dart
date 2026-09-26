@@ -12,6 +12,11 @@ class PresentationScreen extends StatelessWidget {
   const PresentationScreen({super.key, required this.client});
 
   void _send(String key) {
+    if (!client.isConnected) {
+      // A longer buzz than the usual tick: this tap won't reach the PC.
+      HapticFeedback.vibrate();
+      return;
+    }
     HapticFeedback.lightImpact();
     client.key(key);
   }
@@ -35,6 +40,28 @@ class PresentationScreen extends StatelessWidget {
       body: SafeArea(
         child: Column(
           children: [
+            // Link down: say so up top (RemoteScreen's banner is hidden
+            // under this screen).
+            ListenableBuilder(
+              listenable: client,
+              builder: (_, _) => client.isConnected
+                  ? const SizedBox.shrink()
+                  : Container(
+                      width: double.infinity,
+                      color: const Color(0xFF3A2E12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      child: Text(
+                        client.state == ConnState.connecting
+                            ? 'Reconnecting… taps won\'t reach the PC'
+                            : 'Disconnected from the PC',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Color(0xFFE8A33D),
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+            ),
             // Slideshow controls.
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
@@ -120,14 +147,20 @@ class _BigNav extends StatelessWidget {
     final style = FilledButton.styleFrom(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     );
-    final child = Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(icon, size: 76),
-        const SizedBox(height: 6),
-        Text(label,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-      ],
+    // Shrinks in landscape (esp. under the link-down banner) instead of
+    // overflowing.
+    final child = FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 76),
+          const SizedBox(height: 6),
+          Text(label,
+              style:
+                  const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        ],
+      ),
     );
     return SizedBox.expand(
       child: primary
@@ -175,12 +208,15 @@ class _Dot extends StatelessWidget {
   const _Dot({required this.connected});
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 10,
-      height: 10,
-      decoration: BoxDecoration(
-        color: connected ? Colors.greenAccent : Colors.orangeAccent,
-        shape: BoxShape.circle,
+    return Tooltip(
+      message: connected ? 'Connected' : 'Not connected',
+      child: Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          color: connected ? Colors.greenAccent : Colors.orangeAccent,
+          shape: BoxShape.circle,
+        ),
       ),
     );
   }
