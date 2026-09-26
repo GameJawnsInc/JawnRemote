@@ -40,6 +40,8 @@
       --accent-soft: rgba(79, 140, 255, 0.35);
       --accent-glow: rgba(79, 140, 255, 0.10);
       --muted: #6b6358;
+      /* Readable muted TEXT (5:1 on --bg, WCAG AA); --muted stays for rules/borders. */
+      --muted-text: #8a8174;
       --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
       --wrap: 960px;
     }
@@ -121,14 +123,14 @@
     .cta-secondary { color: var(--accent); background: transparent; }
     .cta-secondary:hover { background: rgba(79, 140, 255, 0.1); }
     .download-note {
-      margin-top: 1.25rem; font-size: 0.8rem; letter-spacing: 0.08em; color: var(--muted);
+      margin-top: 1.25rem; font-size: 0.8rem; letter-spacing: 0.08em; color: var(--muted-text);
     }
 
     /* --- Sections ------------------------------------------------- */
     section.block { margin-top: 3rem; }
     section.block h2 {
       font-size: 1rem; font-weight: 400; letter-spacing: 0.18em;
-      text-transform: uppercase; color: var(--muted); margin-bottom: 1.25rem;
+      text-transform: uppercase; color: var(--muted-text); margin-bottom: 1.25rem;
       padding-bottom: 0.5rem; border-bottom: 1px solid var(--accent-soft);
     }
     section.block h2.has-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75rem; }
@@ -166,7 +168,7 @@
     /* --- Quick start (collapsible) ------------------------------- */
     .quickstart summary {
       cursor: pointer; padding: 1rem 1.5rem; font-size: 1rem; letter-spacing: 0.12em;
-      text-transform: uppercase; color: var(--muted); border: 1px solid var(--accent-soft);
+      text-transform: uppercase; color: var(--muted-text); border: 1px solid var(--accent-soft);
       list-style: none; display: flex; justify-content: space-between; align-items: center;
       transition: color 0.2s ease, border-color 0.2s ease;
     }
@@ -202,7 +204,7 @@
 
     .price-note {
       margin-top: 2rem; padding: 0.9rem 1.25rem; border: 1px dashed var(--muted);
-      text-align: center; font-size: 0.85rem; color: var(--muted); letter-spacing: 0.05em;
+      text-align: center; font-size: 0.85rem; color: var(--muted-text); letter-spacing: 0.05em;
     }
     .price-note b { color: var(--ink); }
 
